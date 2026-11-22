@@ -277,6 +277,9 @@ const runCheck = (targetArg, flags, rules) => {
   if (!VALID_PRESETS.has(effectivePreset)) {
     throw new Error(`Invalid --preset "${effectivePreset}". Expected: ${[...VALID_PRESETS].join(", ")}`);
   }
+  if (flags.format !== undefined && flags.format !== "review-result") {
+    throw new Error(`Invalid --format "${flags.format}". Expected: review-result`);
+  }
 
   const ruleFilter = flags.rule ? flags.rule.toUpperCase() : null;
   const includeFiles =
@@ -347,7 +350,9 @@ const runCheck = (targetArg, flags, rules) => {
     });
     const serialized = `${JSON.stringify(reviewPayload, null, 2)}\n`;
     if (flags.out) {
-      fs.writeFileSync(path.resolve(flags.out), serialized, "utf8");
+      const outPath = path.resolve(flags.out);
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, serialized, "utf8");
     }
     process.stdout.write(serialized);
     return failed ? 1 : 0;
@@ -356,7 +361,9 @@ const runCheck = (targetArg, flags, rules) => {
   if (flags.json) {
     const serialized = `${JSON.stringify({ ...result, ok: !failed }, null, 2)}\n`;
     if (flags.out) {
-      fs.writeFileSync(path.resolve(flags.out), serialized, "utf8");
+      const outPath = path.resolve(flags.out);
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, serialized, "utf8");
     }
     process.stdout.write(serialized);
     return failed ? 1 : 0;

@@ -202,6 +202,10 @@ if [ -z "$TARGET" ] || [ "$TARGET" = "/" ]; then
   exit 1
 fi
 
+while [ "$TARGET" != "/" ] && [ "${TARGET%/}" != "$TARGET" ]; do
+  TARGET="${TARGET%/}"
+done
+
 # Pre-flight ownership verification before removing anything
 for SKILL_DIR in "$SKILLS_ROOT"/*; do
   [ -d "$SKILL_DIR" ] || continue

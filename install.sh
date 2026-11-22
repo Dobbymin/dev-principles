@@ -219,6 +219,10 @@ if [ -z "$TARGET" ] || [ "$TARGET" = "/" ]; then
   exit 1
 fi
 
+while [ "$TARGET" != "/" ] && [ "${TARGET%/}" != "$TARGET" ]; do
+  TARGET="${TARGET%/}"
+done
+
 if [ -e "$TARGET" ] && [ ! -d "$TARGET" ]; then
   echo "Target parent path is not a directory: $TARGET" >&2
   exit 1

@@ -46,6 +46,7 @@ TypeScript, React, Next.js 중심 프론트엔드 및 범용 소프트웨어 개
 ```
 
 - **소유권 검증 및 레거시 마이그레이션**: `install.sh`와 `uninstall.sh`는 심볼릭 링크의 canonical 대상 경로와 `.dev-principles-script-managed` 메타데이터(`plugin=dev-principles`, `managed_by=install.sh`, `skill`, `install_path`, `source_path`)를 검증합니다. 타 플러그인의 심볼릭 링크·파일·디렉터리는 절대 덮어쓰거나 삭제하지 않으며, 기존 `managed-by=install.sh` 마커는 재설치 시 안전하게 마이그레이션됩니다.
+- **Windows Git Bash(MSYS2) 지원**: [`.gitattributes`](.gitattributes)로 `*.sh`의 LF 줄바꿈을 보장하고 `HOME`/`USERPROFILE` 폴백 및 CRLF 마커 정규화를 지원합니다. 개발자 모드(심볼릭 링크 권한)가 꺼진 Windows 환경에서는 `--copy` 옵션을 사용하며, 타 플러그인의 디렉터리 Junction도 동일하게 보호됩니다.
 
 ---
 
@@ -112,7 +113,10 @@ node bin/dev-principles.mjs list --automation static
 node bin/dev-principles.mjs explain SEC-01
 node bin/dev-principles.mjs check --preset fsd --strict
 node bin/dev-principles.mjs check --staged
+node bin/dev-principles.mjs check --format review-result --pr-context pr.json --out reports/review.json
 ```
+
+- `doctor`는 설정 스키마와 보안 불변(`DQ-04`, `SEC-01`, `SEC-02`) 외에도 로컬 규칙 충돌(`[Conflict]`)과 동반 워크플로우 플러그인(`github-convention`) 감지 상태를 함께 진단합니다.
 
 ---
 
@@ -128,11 +132,14 @@ node bin/dev-principles.mjs check --staged
 Node.js 22 이상 환경에서 외부 패키지 설치 없이 바로 검증할 수 있습니다.
 
 ```bash
+npm run prepare    # .githooks 및 fetch.prune true 로컬 Git 설정
 npm run validate   # 매니페스트 버전, 스키마, 프런트매터, 예산, 58개 Rule ID 정합성 점검
 npm run garden     # 깨진 마크다운 링크, wikilink·개인경로 유출, 고아 파일 점검
-npm test           # 훅, 설치기, CLI, 정적 검사기, Eval 스위트 실행
-npm run check      # 위 3가지 일괄 실행
+npm test           # 훅, 설치기(macOS/Linux/Windows), CLI, 정적 검사기, Eval 스위트 실행
+npm run check      # validate + garden + test 일괄 실행
 ```
+
+- CI([`.github/workflows/ci.yml`](.github/workflows/ci.yml))는 `main` push, `pull_request`, `workflow_dispatch`에서 `ubuntu-latest`, `macos-latest`, `windows-latest` 3-OS 매트릭스로 검증합니다.
 
 ## 라이선스
 

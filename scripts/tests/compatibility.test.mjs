@@ -82,19 +82,24 @@ test("review-contract separates reviewer domains, deduplicates findings, and pre
     reviewerId: "principles-reviewer",
     scope: "pr-diff",
     target: { commit: "abc123", paths: ["src/a.ts"] },
+    status: "error",
     checkedAreas: ["clean-code", "typescript"],
+    unreviewedAreas: ["security", "architecture-soc"],
     findings: [
       { severity: "must", ruleId: "TS-02", file: "src/a.ts", line: 10, evidence: "any used" },
-      // Duplicate SEC-01 emitted by non-owner should lose to canonical security-reviewer
-      { reviewerId: "principles-reviewer", severity: "must", ruleId: "SEC-01", file: "src/a.ts", line: 20, evidence: "dup" },
+      // Emitted by non-owner without explicit reviewerId: preserves defaultReviewerId, then dedups in favor of canonical owner
+      { severity: "must", ruleId: "SEC-01", file: "src/a.ts", line: 20, evidence: "dup" },
     ],
   });
+  assert.equal(r1.findings[1].reviewerId, "principles-reviewer");
 
   const r2 = buildReviewResult({
     reviewerId: "architecture-reviewer",
     scope: "pr-diff",
     target: { commit: "abc123", paths: ["src/a.ts"] },
+    status: "completed",
     checkedAreas: ["architecture-soc"],
+    unreviewedAreas: ["clean-code"],
     findings: [
       { severity: "must", ruleId: "SOC-04", file: "src/a.ts", line: 10, evidence: "reverse dep" },
     ],
@@ -104,6 +109,7 @@ test("review-contract separates reviewer domains, deduplicates findings, and pre
     reviewerId: "security-reviewer",
     scope: "pr-diff",
     target: { commit: "abc123", paths: ["src/a.ts"] },
+    status: "findings_reported",
     checkedAreas: ["security"],
     findings: [
       { reviewerId: "security-reviewer", severity: "must", ruleId: "SEC-01", file: "src/a.ts", line: 20, evidence: "secret" },
@@ -111,6 +117,8 @@ test("review-contract separates reviewer domains, deduplicates findings, and pre
   });
 
   const merged = mergeReviewResults([r1, r2, r3]);
+  assert.equal(merged.status, "error");
+  assert.deepEqual(merged.unreviewedAreas, []);
   assert.equal(merged.findings.length, 3);
   // Distinct Rule IDs on the same line (TS-02 and SOC-04 at line 10) are preserved
   assert.ok(merged.findings.some((f) => f.ruleId === "TS-02" && f.line === 10));
@@ -127,7 +135,7 @@ test("CLI check supports --format review-result, --pr-context, and --out standal
     fs.mkdirSync(path.join(dir, "src"), { recursive: true });
     fs.writeFileSync(path.join(dir, "src", "clean.ts"), "export const sum = (a: number, b: number) => a + b;\n");
     const prCtxPath = path.join(dir, "pr-context.json");
-    const outPath = path.join(dir, "review-out.json");
+    const outPath = path.join(dir, "nested", "reports", "review-out.json");
     fs.writeFileSync(
       prCtxPath,
       JSON.stringify({
@@ -163,6 +171,14 @@ test("CLI check supports --format review-result, --pr-context, and --out standal
     assert.equal(parsed.externalContext.prNumber, 42);
     assert.equal(parsed.target.commit, "deadbeef");
     assert.equal(fs.existsSync(outPath), true);
+
+    assert.throws(() => {
+      execFileSync(
+        process.execPath,
+        [BIN_PATH, "check", "--cwd", dir, "--format", "unknown-format"],
+        { env: { ...process.env, HOME: fakeHome }, encoding: "utf8", stdio: "pipe" },
+      );
+    }, /Invalid --format/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(fakeHome, { recursive: true, force: true });
@@ -237,6 +253,20 @@ test("project rule conflicts preserve existing project rules without mutating fi
     assert.equal(doctorCo.detected.hasGithubWorkflowConfig, true);
     assert.deepEqual(doctorCo.companionPlugins, ["github-convention"]);
     assert.equal(doctorCo.conflicts.length, 0);
+
+    // 5. Symlinked CLAUDE.md -> AGENTS.md deduplicates FSD-01 conflict
+    if (process.platform !== "win32") {
+      fs.symlinkSync(
+        path.join(fsdConflictsDir, "AGENTS.md"),
+        path.join(fsdConflictsDir, "CLAUDE.md"),
+      );
+      const dedupedConflicts = detectProjectConflicts({
+        cwd: fsdConflictsDir,
+        config: loaded1.config,
+        detected: detected1,
+      });
+      assert.equal(dedupedConflicts.filter((c) => c.ruleId === "FSD-01").length, 1);
+    }
   } finally {
     fs.rmSync(fsdConflictsDir, { recursive: true, force: true });
     fs.rmSync(claudeConflictDir, { recursive: true, force: true });

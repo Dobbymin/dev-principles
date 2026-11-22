@@ -52,7 +52,7 @@ export const canDelegateReview = ({ fromReviewer, toReviewer, visited = [] } = {
 export const normalizeFinding = (finding, defaultReviewerId = "principles-reviewer") => {
   const ruleId = String(finding.ruleId ?? "").toUpperCase();
   return {
-    reviewerId: finding.reviewerId ?? getOwnerReviewerForRule(ruleId) ?? defaultReviewerId,
+    reviewerId: finding.reviewerId ?? defaultReviewerId ?? getOwnerReviewerForRule(ruleId),
     severity: String(finding.severity ?? "should").toLowerCase(),
     ruleId,
     file: toPosixPath(finding.file ?? ""),
@@ -120,11 +120,12 @@ export const mergeReviewResults = (results = [], { externalFindings = [] } = {})
   const conflictMap = new Map();
   let target = { commit: null, diff: null, paths: [] };
   let externalContext = null;
+  const STATUS_RANK = { completed: 0, skipped: 1, findings_reported: 2, error: 3 };
   let status = "completed";
 
   for (const res of results) {
     if (!res) continue;
-    if (res.status && res.status !== "completed") {
+    if (res.status && (STATUS_RANK[res.status] ?? 0) > (STATUS_RANK[status] ?? 0)) {
       status = res.status;
     }
     if (res.target) {
@@ -159,7 +160,7 @@ export const mergeReviewResults = (results = [], { externalFindings = [] } = {})
     checkedAreas: [...checkedAreas],
     findings: [...deduped.values()],
     conflicts: [...conflictMap.values()],
-    unreviewedAreas: [...unreviewedAreas],
+    unreviewedAreas: [...unreviewedAreas].filter((area) => !checkedAreas.has(area)),
     externalContext,
   });
 };

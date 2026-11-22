@@ -21,10 +21,12 @@ const CONVENTION_FILES = [
   "eslint.config.mjs",
   "eslint.config.cjs",
   "eslint.config.ts",
+  ".eslintrc",
   ".eslintrc.json",
   ".eslintrc.js",
   ".eslintrc.cjs",
   "biome.json",
+  "biome.jsonc",
   ".dependency-cruiser.js",
   ".dependency-cruiser.cjs",
   ".dependency-cruiser.mjs",
@@ -141,9 +143,18 @@ export const detectProjectConflicts = ({ cwd = process.cwd(), config, detected }
   }
 
   if (effectivePreset === "fsd") {
+    const seenRealPaths = new Set();
     for (const fileName of ["AGENTS.md", "CLAUDE.md"]) {
       const filePath = path.join(root, fileName);
       if (!fs.existsSync(filePath)) continue;
+      let realFilePath = filePath;
+      try {
+        realFilePath = fs.realpathSync.native(filePath);
+      } catch {
+        // Fallback to original path if realpath fails
+      }
+      if (seenRealPaths.has(realFilePath)) continue;
+      seenRealPaths.add(realFilePath);
       let content = "";
       try {
         content = fs.readFileSync(filePath, "utf8");
