@@ -198,6 +198,11 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
     throw new Error("schemas/config.schema.json: invalid schema structure");
   }
 
+  const binPath = path.join(repoRoot, "bin", "dev-principles.mjs");
+  if (!fs.existsSync(binPath)) {
+    throw new Error("Missing bin/dev-principles.mjs");
+  }
+
   // Validate skills/dev-principles and references
   const skillsDir = path.join(repoRoot, "skills");
   if (!fs.existsSync(skillsDir)) {

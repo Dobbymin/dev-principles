@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "dev-principles": "./bin/dev-principles.mjs"
+  },
   "scripts": {
     "prepare": "node scripts/setup-git-hooks.mjs",
     "validate": "node scripts/validate.mjs",
