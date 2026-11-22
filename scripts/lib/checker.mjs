@@ -403,11 +403,13 @@ const resolveLocalImport = (fromFile, specifier, rootDir, sourceRootRel, tsAlias
   return toPosix(path.relative(rootDir, resolved));
 };
 
+const realpath = (p) => (fs.realpathSync.native ? fs.realpathSync.native(p) : fs.realpathSync(p));
+
 export const collectGitTargetFiles = (cwd, { staged = false, changed = false } = {}) => {
-  const rootDir = fs.realpathSync(path.resolve(cwd));
+  const rootDir = realpath(path.resolve(cwd));
   let gitRoot;
   try {
-    gitRoot = fs.realpathSync(
+    gitRoot = realpath(
       execFileSync("git", ["rev-parse", "--show-toplevel"], {
         cwd: rootDir,
         encoding: "utf8",
@@ -487,7 +489,7 @@ export const runStaticChecks = ({
   rules = [],
   config = {},
 } = {}) => {
-  const rootDir = path.resolve(cwd);
+  const rootDir = realpath(path.resolve(cwd));
   const sourceRootRel = toPosix(config?.architecture?.sourceRoot ?? "src").replace(/^\.\/|\/+$/g, "") || ".";
   const activePreset = preset ?? config?.architecture?.preset ?? "auto";
   const ignorePatterns = config?.ignore ?? [];
