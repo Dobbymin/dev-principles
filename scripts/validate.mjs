@@ -19,6 +19,30 @@ export const MANIFEST_PATHS = [
 const MAX_SKILL_BYTES = 8192;
 const MAX_SKILL_LINES = 150;
 
+export const EXPECTED_RULE_IDS = [
+  "AI-01", "AI-02", "AI-03", "AI-04", "AI-05",
+  "CC-01", "CC-02", "CC-03", "CC-04", "CC-05",
+  "TS-01", "TS-02", "TS-03", "TS-04", "TS-05", "TS-06",
+  "SOC-01", "SOC-02", "SOC-03", "SOC-04", "SOC-05", "SOC-06", "SOC-07",
+  "DQ-01", "DQ-02", "DQ-03", "DQ-04", "DQ-05",
+  "FB-01", "FB-02", "FB-03", "FB-04",
+  "FSD-01", "FSD-02", "FSD-03", "FSD-04", "FSD-05", "FSD-06", "FSD-07", "FSD-08", "FSD-09",
+  "NEXT-01", "NEXT-02", "NEXT-03", "NEXT-04", "NEXT-05", "NEXT-06",
+];
+
+const EXPECTED_REFERENCES = [
+  "ai-workflow.md",
+  "clean-code.md",
+  "typescript.md",
+  "architecture-soc.md",
+  "data-and-state.md",
+  "review-checklist.md",
+  "presets/README.md",
+  "presets/feature-based.md",
+  "presets/fsd.md",
+  "presets/next-app-router.md",
+];
+
 const readJson = (filePath) => JSON.parse(fs.readFileSync(filePath, "utf8"));
 
 export const parseFrontmatter = (content, fileLabel) => {
@@ -160,6 +184,7 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
           `${relPath}: contextFileName must point to skill entry, not "${manifest.contextFileName}"`,
         );
       }
+      assertPathExists(repoRoot, manifest.contextFileName, relPath, "contextFileName");
     }
   }
 
@@ -173,41 +198,61 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
     throw new Error("schemas/config.schema.json: invalid schema structure");
   }
 
-  // Optional/staged checks for skills/, agents/, commands/, hooks/
-  let skillCount = 0;
+  // Validate skills/dev-principles and references
   const skillsDir = path.join(repoRoot, "skills");
-  if (fs.existsSync(skillsDir)) {
-    const skillEntries = fs
-      .readdirSync(skillsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .sort();
-    for (const skillName of skillEntries) {
-      const skillFile = path.join(skillsDir, skillName, "SKILL.md");
-      if (!fs.existsSync(skillFile)) {
-        throw new Error(`skills/${skillName}: missing SKILL.md`);
-      }
-      const content = fs.readFileSync(skillFile, "utf8");
-      const bytes = Buffer.byteLength(content, "utf8");
-      const lines = content.split(/\r?\n/).length;
-      if (bytes > MAX_SKILL_BYTES) {
-        throw new Error(`skills/${skillName}/SKILL.md exceeds ${MAX_SKILL_BYTES} bytes (${bytes})`);
-      }
-      if (lines > MAX_SKILL_LINES) {
-        throw new Error(`skills/${skillName}/SKILL.md exceeds ${MAX_SKILL_LINES} lines (${lines})`);
-      }
-      const fm = parseFrontmatter(content, `skills/${skillName}/SKILL.md`);
-      if (fm.name !== skillName) {
-        throw new Error(
-          `skills/${skillName}/SKILL.md: frontmatter name "${fm.name}" !== "${skillName}"`,
-        );
-      }
-      if (!fm.description || !fm.description.includes("Use ")) {
-        throw new Error(
-          `skills/${skillName}/SKILL.md: frontmatter description must include a "Use ..." trigger phrase`,
-        );
-      }
-      skillCount += 1;
+  if (!fs.existsSync(skillsDir)) {
+    throw new Error("Missing skills/ directory");
+  }
+  const skillEntries = fs
+    .readdirSync(skillsDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
+    .sort();
+  if (skillEntries.length === 0) {
+    throw new Error("skills/ directory contains no skills");
+  }
+
+  let skillCount = 0;
+  for (const skillName of skillEntries) {
+    const skillFile = path.join(skillsDir, skillName, "SKILL.md");
+    if (!fs.existsSync(skillFile)) {
+      throw new Error(`skills/${skillName}: missing SKILL.md`);
+    }
+    const content = fs.readFileSync(skillFile, "utf8");
+    const bytes = Buffer.byteLength(content, "utf8");
+    const lines = content.split(/\r?\n/).length;
+    if (bytes > MAX_SKILL_BYTES) {
+      throw new Error(`skills/${skillName}/SKILL.md exceeds ${MAX_SKILL_BYTES} bytes (${bytes})`);
+    }
+    if (lines > MAX_SKILL_LINES) {
+      throw new Error(`skills/${skillName}/SKILL.md exceeds ${MAX_SKILL_LINES} lines (${lines})`);
+    }
+    const fm = parseFrontmatter(content, `skills/${skillName}/SKILL.md`);
+    if (fm.name !== skillName) {
+      throw new Error(
+        `skills/${skillName}/SKILL.md: frontmatter name "${fm.name}" !== "${skillName}"`,
+      );
+    }
+    if (!fm.description || !fm.description.includes("Use ")) {
+      throw new Error(
+        `skills/${skillName}/SKILL.md: frontmatter description must include a "Use ..." trigger phrase`,
+      );
+    }
+    skillCount += 1;
+  }
+
+  const refsDir = path.join(skillsDir, "dev-principles", "references");
+  let combinedRefs = "";
+  for (const relRef of EXPECTED_REFERENCES) {
+    const refPath = path.join(refsDir, path.normalize(relRef));
+    if (!fs.existsSync(refPath)) {
+      throw new Error(`Missing reference module: skills/dev-principles/references/${relRef}`);
+    }
+    combinedRefs += `\n${fs.readFileSync(refPath, "utf8")}`;
+  }
+  for (const ruleId of EXPECTED_RULE_IDS) {
+    if (!combinedRefs.includes(`\`${ruleId}\``)) {
+      throw new Error(`Missing Rule ID "${ruleId}" in skills/dev-principles/references/`);
     }
   }
 
