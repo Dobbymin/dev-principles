@@ -3,11 +3,14 @@
 ## 1. 감사 실행 절차 (5단계)
 
 1. **사전 정적 스캔**: 가능하면 먼저 `node bin/dev-principles.mjs check`를 실행해 `static`/`hybrid` 위반 후보를 확보한다.
-2. **컨텍스트 & 충돌 파악**: `.dev-principles.yaml`, `AGENTS.md`/`CLAUDE.md`, `tsconfig.json`, `package.json`, 기존 디렉터리 구조를 확인해 활성 프리셋과 오버라이드를 확정한다. 프로젝트 기존 규칙이 스킬 규칙과 충돌하면 기존 규칙을 존중하고 `[Conflict]` 1줄로 기록한다.
-3. **서브에이전트 라우팅**:
-   - 일반 코드·타입·테스트·성능·접근성 → `principles-reviewer`
-   - 아키텍처·모듈 경계·순환 참조·RSC 경계 → `architecture-reviewer`
-   - 시크릿·XSS·주입·인증 토큰·신뢰 경계 → `security-reviewer`
+2. **컨텍스트 & 충돌 파악**: `.dev-principles.yaml`, `AGENTS.md`/`CLAUDE.md`, `tsconfig.json`, `package.json`, 기존 디렉터리 구조를 확인해 활성 프리셋과 오버라이드를 확정한다. 프로젝트 기존 규칙이 스킬 규칙과 충돌하면 기존 규칙을 존중하고 `[Conflict] RULE-ID ↔ 프로젝트 기존 규칙 | 원인: <충돌 원인> | 유지 사유: <기존 규칙 유지 이유>` 형식으로 기록한다.
+3. **서브에이전트 라우팅 & 중복/무한위임 방지**:
+   - 일반 코드·타입·테스트·성능·접근성(`AI-*`, `CC-*`, `TS-*`, `DQ-01/02/03/05`, `TEST-*`, `PERF-01/02`, `A11Y-01`, `DEP-01`) → `principles-reviewer`
+   - 아키텍처·모듈 경계·순환 참조·RSC 경계(`SOC-*`, `FB-*`, `FSD-*`, `NEXT-01~03/05/06`, `PERF-03`) → `architecture-reviewer`
+   - 시크릿·XSS·주입·인증 토큰·신뢰 경계(`SEC-*`, `DQ-04`, `NEXT-04`) → `security-reviewer`
+   - 사전 탐색(비리뷰어) → `structure-analyzer`
+   - 각 Reviewer는 타 전문 Reviewer의 Rule ID를 중복 보고하거나 임의로 재분류하지 않으며, 위임은 단일 패스만 허용한다(상호 재귀 위임 금지).
+   - `github-convention` 책임(Issue AC, PR 템플릿, 브랜치/커밋 정책, CI/Check, Git 변경 권한, PR Secret Scan)과 혼합하지 않으며, 상대 플러그인이 없어도 단독 동작한다.
 4. **오탐 필터 적용**:
    - 요청·diff 범위 밖의 기존 코드를 불필요하게 트집 잡지 않는다 (`AI-03`).
    - **생성/벤더 UI 제외**: `components/ui/*`, `shared/ui/*` 중 CLI 생성 원시 UI는 직접 로직을 수정한 diff가 아니면 감사에서 제외한다.
@@ -84,7 +87,7 @@
 
 - **대상**: `<PR / 브랜치 / 파일 목록>`
 - **적용 프로필**: `preset: <auto|feature-based|fsd|next-app-router>` | 오버라이드: `<없음 또는 요약>`
-- **충돌 감지**: `<없음 또는 [Conflict] RULE-ID ↔ 프로젝트 기존 규칙 → 적용 기준>`
+- **충돌 감지**: `<없음 또는 [Conflict] RULE-ID ↔ 프로젝트 기존 규칙 | 원인: <충돌 원인> | 유지 사유: <기존 규칙 유지 이유>>`
 - **정적 스캔**: `<dev-principles check 결과 요약 또는 미실행 사유>`
 - **요약**: `MUST` N건 · `SHOULD` N건 · `PREFER` N건
 

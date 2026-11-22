@@ -3,9 +3,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { detectCompanionPlugins } from "../hooks/session-start.mjs";
 import { collectGitTargetFiles, runStaticChecks } from "../scripts/lib/checker.mjs";
 import { checkCustomPrinciplePaths, loadMergedConfig, validateConfig } from "../scripts/lib/config.mjs";
-import { detectProject } from "../scripts/lib/detect.mjs";
+import { detectProject, detectProjectConflicts } from "../scripts/lib/detect.mjs";
+import { buildReviewResult, getOwnerReviewerForRule } from "../scripts/lib/review-contract.mjs";
 import { loadRules, resolveEffectiveRules } from "../scripts/lib/rules.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,7 +37,7 @@ Commands:
   explain <RULE-ID> [--cwd <dir>] [--json]
       Show detailed rule contract, automation level, rationale, exceptions, and example for a Rule ID.
 
-  check [target] [--cwd <dir>] [--preset <name>] [--rule <RULE-ID>] [--staged] [--changed] [--strict] [--json]
+  check [target] [--cwd <dir>] [--preset <name>] [--rule <RULE-ID>] [--staged] [--changed] [--strict] [--format review-result] [--pr-context <file>] [--out <file>] [--json]
       Run zero-dependency static checks (secrets, XSS sinks, token storage, any, raw fetch, cycles, boundaries).
 
 Options:
@@ -136,6 +138,12 @@ const runDoctor = (flags, rules) => {
   const errors = [...loaded.parseErrors, ...validation.errors];
   const warnings = [...validation.warnings, ...customWarnings];
   const detected = detectProject(cwd);
+  const conflicts = detectProjectConflicts({ cwd, config: loaded.config, detected });
+  const { companions: companionPlugins } = detectCompanionPlugins({
+    cwd,
+    projectRoot: detected.root,
+    env: process.env,
+  });
 
   const report = {
     ok: errors.length === 0,
@@ -146,6 +154,8 @@ const runDoctor = (flags, rules) => {
       preset: loaded.config.architecture?.preset ?? "auto",
     },
     detected,
+    conflicts,
+    companionPlugins,
     errors,
     warnings,
   };
@@ -167,6 +177,14 @@ const runDoctor = (flags, rules) => {
     }
     if (detected.localConventions.length > 0) {
       process.stdout.write(`- Local conventions: ${detected.localConventions.join(", ")}\n`);
+    }
+    if (companionPlugins.length > 0) {
+      process.stdout.write(`- Companion plugins: ${companionPlugins.join(", ")} (separate workflow domain)\n`);
+    }
+    for (const conflict of conflicts) {
+      process.stdout.write(
+        `[Conflict] ${conflict.ruleId} ↔ ${conflict.projectRule} | 원인: ${conflict.cause} | 유지 사유: ${conflict.reasonKept}\n`,
+      );
     }
     for (const warn of warnings) {
       process.stdout.write(`WARN: ${warn}\n`);
@@ -283,8 +301,64 @@ const runCheck = (targetArg, flags, rules) => {
     ? result.summary.must > 0 || result.summary.should > 0
     : result.summary.must > 0;
 
+  if (flags.format === "review-result") {
+    let externalContext = null;
+    let targetOverride = null;
+    if (flags["pr-context"]) {
+      const prPath = path.resolve(flags["pr-context"]);
+      if (fs.existsSync(prPath)) {
+        try {
+          const prJson = JSON.parse(fs.readFileSync(prPath, "utf8"));
+          externalContext = {
+            source: prJson.source ?? "github-convention",
+            prNumber: prJson.prNumber ?? null,
+            baseRef: prJson.baseRef ?? null,
+          };
+          targetOverride = {
+            commit: prJson.commit ?? null,
+            diff: prJson.diff ?? null,
+            paths: Array.isArray(prJson.paths) ? prJson.paths : [],
+          };
+        } catch {
+          // Ignore malformed external PR context; standalone check still succeeds.
+        }
+      }
+    }
+
+    const conflicts = detectProjectConflicts({ cwd, config, detected });
+    const reviewPayload = buildReviewResult({
+      reviewerId: "dev-principles-static-check",
+      scope: flags.staged ? "staged" : flags.changed ? "changed" : targetArg ?? "repository",
+      target: targetOverride ?? { paths: targetArg ? [targetArg] : [] },
+      status: failed ? "findings_reported" : "completed",
+      checkedAreas: ["static-rules", `preset:${result.preset}`],
+      findings: result.findings.map((f) => ({
+        reviewerId: getOwnerReviewerForRule(f.ruleId),
+        severity: f.severity,
+        ruleId: f.ruleId,
+        file: f.file,
+        line: f.line,
+        evidence: f.message,
+        suggestion: f.suggestion,
+      })),
+      conflicts,
+      unreviewedAreas: ["manual-contextual-review"],
+      externalContext,
+    });
+    const serialized = `${JSON.stringify(reviewPayload, null, 2)}\n`;
+    if (flags.out) {
+      fs.writeFileSync(path.resolve(flags.out), serialized, "utf8");
+    }
+    process.stdout.write(serialized);
+    return failed ? 1 : 0;
+  }
+
   if (flags.json) {
-    process.stdout.write(`${JSON.stringify({ ...result, ok: !failed }, null, 2)}\n`);
+    const serialized = `${JSON.stringify({ ...result, ok: !failed }, null, 2)}\n`;
+    if (flags.out) {
+      fs.writeFileSync(path.resolve(flags.out), serialized, "utf8");
+    }
+    process.stdout.write(serialized);
     return failed ? 1 : 0;
   }
 
