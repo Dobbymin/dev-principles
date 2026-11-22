@@ -18,13 +18,14 @@ const FORBIDDEN_PLANNING_DOCS = new Set([
   "skill-draft.md",
 ]);
 
-const collectMarkdownFiles = (dir, out = []) => {
+const collectFilesByExt = (dir, exts, out = []) => {
+  if (!fs.existsSync(dir)) return out;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (SKIP_DIRS.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectMarkdownFiles(full, out);
-    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      collectFilesByExt(full, exts, out);
+    } else if (entry.isFile() && exts.some((ext) => entry.name.endsWith(ext))) {
       out.push(full);
     }
   }
@@ -36,13 +37,13 @@ const stripCodeFences = (text) =>
 
 export const gardenRepo = (repoRoot = REPO_ROOT) => {
   const issues = [];
-  const mdFiles = collectMarkdownFiles(repoRoot);
+  const mdFiles = collectFilesByExt(repoRoot, [".md"]);
 
   for (const filePath of mdFiles) {
     const relFile = path.relative(repoRoot, filePath).split(path.sep).join("/");
     const baseName = path.basename(filePath);
 
-    // 1. Ensure planning/design docs stay in Obsidian wiki only
+    // 1. Ensure planning/design docs stay outside plugin repository
     if (FORBIDDEN_PLANNING_DOCS.has(baseName)) {
       issues.push(`${relFile}: planning/design document must not live in plugin repository`);
     }
@@ -85,7 +86,20 @@ export const gardenRepo = (repoRoot = REPO_ROOT) => {
     }
   }
 
-  // 4. Check orphan files in skills/, agents/, commands/
+  // 4. Reject personal absolute paths in runtime directories
+  for (const runtimeDir of ["skills", "agents", "commands", "hooks", "bin"]) {
+    const absDir = path.join(repoRoot, runtimeDir);
+    const runtimeFiles = collectFilesByExt(absDir, [".md", ".mjs", ".json"]);
+    for (const f of runtimeFiles) {
+      const relFile = path.relative(repoRoot, f).split(path.sep).join("/");
+      const content = fs.readFileSync(f, "utf8");
+      if (/(\/Users\/|\/home\/|C:\\Users\\)/.test(content)) {
+        issues.push(`${relFile}: contains personal absolute path`);
+      }
+    }
+  }
+
+  // 5. Check orphan files in skills/, agents/, commands/
   const skillsDir = path.join(repoRoot, "skills");
   if (fs.existsSync(skillsDir)) {
     for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
@@ -111,6 +125,32 @@ export const gardenRepo = (repoRoot = REPO_ROOT) => {
       if (entry.name === ".DS_Store") continue;
       if (!entry.isFile() || !entry.name.endsWith(".md")) {
         issues.push(`${dirName}/${entry.name}: expected .md file only`);
+      }
+    }
+  }
+
+  // 6. Check that every reference markdown file is linked from SKILL.md or presets/README.md
+  const skillMdPath = path.join(repoRoot, "skills", "dev-principles", "SKILL.md");
+  const presetsReadmePath = path.join(
+    repoRoot,
+    "skills",
+    "dev-principles",
+    "references",
+    "presets",
+    "README.md",
+  );
+  const refsDir = path.join(repoRoot, "skills", "dev-principles", "references");
+  if (fs.existsSync(skillMdPath) && fs.existsSync(refsDir)) {
+    const entryText =
+      fs.readFileSync(skillMdPath, "utf8") +
+      "\n" +
+      (fs.existsSync(presetsReadmePath) ? fs.readFileSync(presetsReadmePath, "utf8") : "");
+    const refMdFiles = collectFilesByExt(refsDir, [".md"]);
+    for (const refFile of refMdFiles) {
+      const base = path.basename(refFile);
+      if (!entryText.includes(base)) {
+        const relRef = path.relative(repoRoot, refFile).split(path.sep).join("/");
+        issues.push(`${relRef}: unreferenced file (not linked from SKILL.md or presets/README.md)`);
       }
     }
   }

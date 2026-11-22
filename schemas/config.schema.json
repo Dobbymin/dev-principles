@@ -54,7 +54,7 @@
       "type": "object",
       "description": "Per-Rule ID severity overrides (must | should | prefer | off)",
       "propertyNames": {
-        "pattern": "^(AI|CC|TS|SOC|DQ|FB|FSD|NEXT)-[0-9]{2}$"
+        "pattern": "^(AI|CC|TS|SOC|DQ|SEC|TEST|PERF|A11Y|DEP|FB|FSD|NEXT)-[0-9]{2}$"
       },
       "additionalProperties": {
         "type": "string",
@@ -68,6 +68,14 @@
         "minLength": 1
       },
       "description": "Relative paths to project-specific principle markdown files"
+    },
+    "ignore": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Relative path prefixes or glob-like segments excluded from static checks and audits"
     }
   }
 }

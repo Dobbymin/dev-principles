@@ -3,7 +3,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadMergedConfig, validateConfig } from "../scripts/lib/config.mjs";
+import { collectGitTargetFiles, runStaticChecks } from "../scripts/lib/checker.mjs";
+import { checkCustomPrinciplePaths, loadMergedConfig, validateConfig } from "../scripts/lib/config.mjs";
 import { detectProject } from "../scripts/lib/detect.mjs";
 import { loadRules, resolveEffectiveRules } from "../scripts/lib/rules.mjs";
 
@@ -26,13 +27,16 @@ Commands:
       Detect repository structure and generate .dev-principles.yaml.
 
   doctor [--cwd <dir>] [--json]
-      Validate configuration, Rule IDs, security invariants, and detect local conflicts.
+      Validate configuration, Rule IDs, security invariants, customPrinciples, and local conflicts.
 
-  list [--category <prefix>] [--severity <level>] [--preset <name>] [--cwd <dir>] [--json]
+  list [--category <prefix>] [--severity <level>] [--automation <level>] [--preset <name>] [--cwd <dir>] [--json]
       List effective rules for the current project.
 
   explain <RULE-ID> [--cwd <dir>] [--json]
-      Show detailed rule contract, rationale, and example for a Rule ID.
+      Show detailed rule contract, automation level, rationale, exceptions, and example for a Rule ID.
+
+  check [target] [--cwd <dir>] [--preset <name>] [--rule <RULE-ID>] [--staged] [--changed] [--strict] [--json]
+      Run zero-dependency static checks (secrets, XSS sinks, token storage, any, raw fetch, cycles, boundaries).
 
 Options:
   -h, --help      Show help
@@ -49,7 +53,14 @@ const parseArgs = (argv) => {
       flags.help = true;
     } else if (arg === "-v" || arg === "--version") {
       flags.version = true;
-    } else if (arg === "--dry-run" || arg === "--json" || arg === "--force") {
+    } else if (
+      arg === "--dry-run" ||
+      arg === "--json" ||
+      arg === "--force" ||
+      arg === "--strict" ||
+      arg === "--staged" ||
+      arg === "--changed"
+    ) {
       flags[arg.slice(2)] = true;
     } else if (arg.startsWith("--")) {
       const key = arg.slice(2);
@@ -82,6 +93,8 @@ ${libsLines}
 rules: {}
 
 customPrinciples: []
+
+ignore: []
 `;
 };
 
@@ -119,8 +132,9 @@ const runDoctor = (flags, rules) => {
   const loaded = loadMergedConfig({ cwd });
   const knownIds = new Set(rules.map((r) => r.id));
   const validation = validateConfig(loaded.config, knownIds);
+  const customWarnings = checkCustomPrinciplePaths(cwd, loaded.config);
   const errors = [...loaded.parseErrors, ...validation.errors];
-  const warnings = [...validation.warnings];
+  const warnings = [...validation.warnings, ...customWarnings];
   const detected = detectProject(cwd);
 
   const report = {
@@ -142,6 +156,15 @@ const runDoctor = (flags, rules) => {
     process.stdout.write(`dev-principles doctor (${cwd})\n`);
     process.stdout.write(`- Config: project=${loaded.hasProject ? ".dev-principles.yaml" : "none (zero-config)"}, global=${loaded.hasGlobal ? "yes" : "none"}\n`);
     process.stdout.write(`- Active preset: ${report.config.preset} (detected: ${detected.detectedPreset}, sourceRoot: ${detected.sourceRoot})\n`);
+    if (detected.detectedTools.length > 0) {
+      process.stdout.write(`- Detected tools: ${detected.detectedTools.join(", ")}\n`);
+    }
+    if (Object.keys(detected.detectedVersions).length > 0) {
+      const vers = Object.entries(detected.detectedVersions)
+        .map(([k, v]) => `${k}@${v}`)
+        .join(", ");
+      process.stdout.write(`- Detected versions: ${vers}\n`);
+    }
     if (detected.localConventions.length > 0) {
       process.stdout.write(`- Local conventions: ${detected.localConventions.join(", ")}\n`);
     }
@@ -172,6 +195,10 @@ const runList = (flags, rules) => {
     const sev = flags.severity.toLowerCase();
     effective = effective.filter((r) => r.effectiveSeverity === sev);
   }
+  if (flags.automation) {
+    const auto = flags.automation.toLowerCase();
+    effective = effective.filter((r) => r.automation === auto);
+  }
 
   if (flags.json) {
     process.stdout.write(`${JSON.stringify(effective, null, 2)}\n`);
@@ -181,7 +208,7 @@ const runList = (flags, rules) => {
   for (const rule of effective) {
     const mark = rule.overridden ? ` (default: ${rule.defaultSeverity})` : "";
     process.stdout.write(
-      `[${rule.effectiveSeverity.toUpperCase()}] ${rule.id} — ${rule.title}${mark}\n`,
+      `[${rule.effectiveSeverity.toUpperCase()}] [${rule.automation}] ${rule.id} — ${rule.title}${mark}\n`,
     );
   }
   process.stdout.write(`\nTotal: ${effective.length} rules\n`);
@@ -210,12 +237,70 @@ const runExplain = (ruleIdRaw, flags, rules) => {
 
   process.stdout.write(`${found.id}: ${found.title}\n`);
   process.stdout.write(`Severity: ${found.effectiveSeverity.toUpperCase()}${found.overridden ? ` (overridden from ${found.defaultSeverity.toUpperCase()})` : ""}${found.securityInvariant ? " [security invariant]" : ""}\n`);
+  process.stdout.write(`Automation: ${found.automation}${found.automationDetail ? ` — ${found.automationDetail}` : ""}\n`);
   if (found.scope) process.stdout.write(`Scope: ${found.scope}\n`);
   if (found.rule) process.stdout.write(`Rule: ${found.rule}\n`);
   if (found.why) process.stdout.write(`Why: ${found.why}\n`);
+  if (found.exceptions) process.stdout.write(`Exceptions: ${found.exceptions}\n`);
   if (found.example) process.stdout.write(`\nExample:\n${found.example}\n`);
   process.stdout.write(`Source: ${found.sourceFile}\n`);
   return 0;
+};
+
+const runCheck = (targetArg, flags, rules) => {
+  const cwd = path.resolve(flags.cwd ?? process.cwd());
+  const { config } = loadMergedConfig({ cwd });
+  const detected = detectProject(cwd);
+  const effectivePreset =
+    flags.preset ??
+    (config.architecture?.preset && config.architecture.preset !== "auto"
+      ? config.architecture.preset
+      : detected.detectedPreset);
+  if (!VALID_PRESETS.has(effectivePreset)) {
+    throw new Error(`Invalid --preset "${effectivePreset}". Expected: ${[...VALID_PRESETS].join(", ")}`);
+  }
+
+  const ruleFilter = flags.rule ? flags.rule.toUpperCase() : null;
+  const includeFiles =
+    flags.staged || flags.changed
+      ? collectGitTargetFiles(cwd, {
+          staged: Boolean(flags.staged),
+          changed: Boolean(flags.changed),
+        })
+      : null;
+
+  const result = runStaticChecks({
+    cwd,
+    targetPath: targetArg ?? null,
+    preset: effectivePreset,
+    ruleFilter,
+    includeFiles,
+    rules,
+    config,
+  });
+
+  const failed = flags.strict
+    ? result.summary.must > 0 || result.summary.should > 0
+    : result.summary.must > 0;
+
+  if (flags.json) {
+    process.stdout.write(`${JSON.stringify({ ...result, ok: !failed }, null, 2)}\n`);
+    return failed ? 1 : 0;
+  }
+
+  process.stdout.write(
+    `dev-principles check (${cwd}) — preset: ${result.preset}, files: ${result.scannedFiles}\n`,
+  );
+  for (const f of result.findings) {
+    process.stdout.write(
+      `[${f.severity.toUpperCase()}] [${f.ruleId}] ${f.file}:${f.line} — ${f.message}\n`,
+    );
+    process.stdout.write(`  Suggestion: ${f.suggestion}\n`);
+  }
+  process.stdout.write(
+    `Summary: ${result.summary.total} findings (MUST: ${result.summary.must}, SHOULD: ${result.summary.should}, PREFER: ${result.summary.prefer})\n`,
+  );
+  return failed ? 1 : 0;
 };
 
 const main = () => {
@@ -241,6 +326,8 @@ const main = () => {
       return runList(flags, rules);
     case "explain":
       return runExplain(positionals[1], flags, rules);
+    case "check":
+      return runCheck(positionals[1], flags, rules);
     default:
       throw new Error(`Unknown command "${command}". Run "dev-principles --help" for usage.`);
   }

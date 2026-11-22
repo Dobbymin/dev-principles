@@ -1,5 +1,5 @@
 ---
-description: Design and implement a feature or module following dev-principles Rule IDs, Context7 verification, and SoC boundaries.
+description: Design and implement a feature or module following dev-principles Rule IDs, adaptive Track S/M/L workflow, Context7 verification, and SoC boundaries.
 argument-hint: "<feature or module description>"
 ---
 
@@ -9,7 +9,8 @@ Run `dev-principles` in `design / implement` mode for:
 
 Steps:
 
-1. Read `skills/dev-principles/SKILL.md` and inspect `.dev-principles.yaml`, `AGENTS.md`, `package.json`, and directory structure (delegate read-only discovery to `agents/structure-analyzer.md` if helpful).
-2. If version-sensitive APIs (React 19, Next.js App Router, TanStack Query v5, TypeScript 5.x) are involved, query Context7 MCP (`resolve-library-id` -> `query-docs`) first (`AI-05`).
-3. Propose concise file placement, responsibility boundaries (`SOC-*`), and type contracts (`TS-*`) before editing, asking if requirements are ambiguous (`AI-01`).
-4. Implement minimally (`AI-02`, `AI-03`) and verify with `tsc`/lint/tests (`AI-04`).
+1. Read `skills/dev-principles/SKILL.md` and `skills/dev-principles/references/workflow-guide.md` to select Track S, M, or L based on task scope and risk.
+2. For Track M/L, inspect `.dev-principles.yaml`, `package.json`, and directory structure (delegate read-only discovery to `agents/structure-analyzer.md` if helpful) and clarify ambiguities before coding (`AI-01`).
+3. If version-sensitive APIs are involved, query Context7 MCP (`resolve-library-id` -> `query-docs`) or fall back to `package.json` and `.d.ts` (`AI-05`).
+4. Propose concise file placement (`SOC-*`), type contracts (`TS-01`), and verification criteria (`AI-04`), then implement minimally (`AI-02`, `AI-03`, `TEST-02`).
+5. Run `node bin/dev-principles.mjs check` and project `tsc`/lint/tests after the final edit (`TEST-03`).

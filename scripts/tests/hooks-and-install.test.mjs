@@ -19,7 +19,7 @@ test("buildSessionStartPayload returns null outside projects without config", ()
   }
 });
 
-test("buildSessionStartPayload activates for projects and formats per platform", () => {
+test("buildSessionStartPayload strips frontmatter and summarizes overrides/customPrinciples", () => {
   const dir = makeTempDir();
   try {
     fs.writeFileSync(path.join(dir, "package.json"), '{"name":"demo"}\n');
@@ -31,7 +31,7 @@ test("buildSessionStartPayload activates for projects and formats per platform",
     });
     assert.equal(claudePayload.hookSpecificOutput.hookEventName, "SessionStart");
     assert.match(claudePayload.hookSpecificOutput.additionalContext, /zero-config project detected/);
-    assert.match(claudePayload.hookSpecificOutput.additionalContext, /dev-principles/);
+    assert.doesNotMatch(claudePayload.hookSpecificOutput.additionalContext, /^---/m);
 
     const cursorPayload = buildSessionStartPayload({
       cwd: dir,
@@ -42,14 +42,24 @@ test("buildSessionStartPayload activates for projects and formats per platform",
 
     fs.writeFileSync(
       path.join(dir, ".dev-principles.yaml"),
-      "version: 1\narchitecture:\n  preset: fsd\n",
+      `version: 1
+architecture:
+  preset: fsd
+rules:
+  CC-04: off
+customPrinciples:
+  - docs/local.md
+`,
     );
     const defaultPayload = buildSessionStartPayload({
       cwd: dir,
       env: {},
       pluginRoot: REPO_ROOT,
     });
-    assert.match(defaultPayload.additionalContext, /\.dev-principles\.yaml detected, preset: fsd/);
+    assert.match(
+      defaultPayload.additionalContext,
+      /\.dev-principles\.yaml detected, preset: fsd, overrides: 1, customPrinciples: 1/,
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -82,7 +92,6 @@ test(
       });
       assert.equal(fs.existsSync(path.join(targetDir, "dev-principles")), false);
 
-      // Refuse to overwrite unmanaged non-empty directory
       const unmanaged = path.join(targetDir, "dev-principles");
       fs.mkdirSync(unmanaged, { recursive: true });
       fs.writeFileSync(path.join(unmanaged, "custom.txt"), "keep\n");

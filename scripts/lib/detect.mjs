@@ -2,6 +2,40 @@ import fs from "node:fs";
 import path from "node:path";
 
 const PREFERRED_LIBS = ["react", "next", "@tanstack/react-query", "typescript", "zod", "zustand"];
+const TOOL_PACKAGES = [
+  "eslint-plugin-boundaries",
+  "dependency-cruiser",
+  "steiger",
+  "vitest",
+  "jest",
+  "@playwright/test",
+];
+
+const CONVENTION_FILES = [
+  "AGENTS.md",
+  "CLAUDE.md",
+  "GEMINI.md",
+  ".cursorrules",
+  "tsconfig.json",
+  "eslint.config.js",
+  "eslint.config.mjs",
+  "eslint.config.cjs",
+  "eslint.config.ts",
+  ".eslintrc.json",
+  ".eslintrc.js",
+  ".eslintrc.cjs",
+  "biome.json",
+  ".dependency-cruiser.js",
+  ".dependency-cruiser.cjs",
+  ".dependency-cruiser.mjs",
+  "steiger.config.ts",
+  "steiger.config.js",
+  "vitest.config.ts",
+  "vitest.config.mjs",
+  "jest.config.js",
+  "jest.config.ts",
+  "playwright.config.ts",
+];
 
 const readPackageJson = (projectRoot) => {
   const pkgPath = path.join(projectRoot, "package.json");
@@ -44,22 +78,20 @@ export const detectProject = (cwd = process.cwd()) => {
   }
 
   const detectedLibraries = [];
+  const detectedVersions = {};
   for (const lib of PREFERRED_LIBS) {
     if (deps[lib]) {
-      detectedLibraries.push(lib === "next" ? "next.js" : lib);
+      const displayName = lib === "next" ? "next.js" : lib;
+      detectedLibraries.push(displayName);
+      detectedVersions[displayName] = deps[lib];
     }
   }
 
+  const detectedTools = TOOL_PACKAGES.filter((tool) => Boolean(deps[tool]));
+
   const localConventions = [];
-  for (const fileName of [
-    "AGENTS.md",
-    "CLAUDE.md",
-    "tsconfig.json",
-    "eslint.config.js",
-    "eslint.config.mjs",
-    "biome.json",
-  ]) {
-    if (fs.existsSync(path.join(root, fileName))) {
+  for (const fileName of CONVENTION_FILES) {
+    if (fs.existsSync(path.join(root, path.normalize(fileName)))) {
       localConventions.push(fileName);
     }
   }
@@ -72,6 +104,8 @@ export const detectProject = (cwd = process.cwd()) => {
       detectedLibraries.length > 0
         ? detectedLibraries
         : ["react", "next.js", "@tanstack/react-query", "typescript"],
+    detectedVersions,
+    detectedTools,
     localConventions,
   };
 };
