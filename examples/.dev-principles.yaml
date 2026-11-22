@@ -20,3 +20,8 @@ rules:
 
 # Project-specific principle documents (optional)
 customPrinciples: []
+
+# Paths excluded from static checks and audits (optional)
+ignore: []
+#  - src/generated
+#  - src/legacy

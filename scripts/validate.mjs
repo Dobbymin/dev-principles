@@ -3,21 +3,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { MANIFEST_PATHS } from "./lib/harnesses.mjs";
+import { loadRules } from "./lib/rules.mjs";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-export const MANIFEST_PATHS = [
-  ".claude-plugin/plugin.json",
-  ".claude-plugin/marketplace.json",
-  ".codex-plugin/plugin.json",
-  ".agents/plugins/marketplace.json",
-  ".cursor-plugin/plugin.json",
-  ".antigravity-plugin/plugin.json",
-  "gemini-extension.json",
-];
+export { MANIFEST_PATHS };
 
 const MAX_SKILL_BYTES = 8192;
 const MAX_SKILL_LINES = 150;
+const VALID_AUTOMATION_LEVELS = new Set(["manual", "static", "automated", "hybrid"]);
 
 export const EXPECTED_RULE_IDS = [
   "AI-01", "AI-02", "AI-03", "AI-04", "AI-05",
@@ -25,6 +19,11 @@ export const EXPECTED_RULE_IDS = [
   "TS-01", "TS-02", "TS-03", "TS-04", "TS-05", "TS-06",
   "SOC-01", "SOC-02", "SOC-03", "SOC-04", "SOC-05", "SOC-06", "SOC-07",
   "DQ-01", "DQ-02", "DQ-03", "DQ-04", "DQ-05",
+  "SEC-01", "SEC-02", "SEC-03",
+  "TEST-01", "TEST-02", "TEST-03",
+  "PERF-01", "PERF-02", "PERF-03",
+  "A11Y-01",
+  "DEP-01",
   "FB-01", "FB-02", "FB-03", "FB-04",
   "FSD-01", "FSD-02", "FSD-03", "FSD-04", "FSD-05", "FSD-06", "FSD-07", "FSD-08", "FSD-09",
   "NEXT-01", "NEXT-02", "NEXT-03", "NEXT-04", "NEXT-05", "NEXT-06",
@@ -36,6 +35,11 @@ const EXPECTED_REFERENCES = [
   "typescript.md",
   "architecture-soc.md",
   "data-and-state.md",
+  "security-and-reliability.md",
+  "testing-and-verification.md",
+  "performance-and-a11y.md",
+  "workflow-guide.md",
+  "automation-guide.md",
   "review-checklist.md",
   "presets/README.md",
   "presets/feature-based.md",
@@ -61,7 +65,6 @@ export const parseFrontmatter = (content, fileLabel) => {
     const key = trimmed.slice(0, colonIdx).trim();
     let value = trimmed.slice(colonIdx + 1).trim();
 
-    // Handle multi-line folded/literal scalar (e.g. description: >)
     if (value === ">" || value === "|") {
       const blockLines = [];
       while (i + 1 < lines.length && /^[ \t]+/.test(lines[i + 1])) {
@@ -197,6 +200,11 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
   if (schema.type !== "object" || !schema.properties?.version) {
     throw new Error("schemas/config.schema.json: invalid schema structure");
   }
+  const rulePatternRaw = schema.properties?.rules?.propertyNames?.pattern;
+  if (!rulePatternRaw) {
+    throw new Error("schemas/config.schema.json: missing rules.propertyNames.pattern");
+  }
+  const rulePattern = new RegExp(rulePatternRaw);
 
   const binPath = path.join(repoRoot, "bin", "dev-principles.mjs");
   if (!fs.existsSync(binPath)) {
@@ -261,6 +269,55 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
     }
   }
 
+  // Validate Rule ID uniqueness, metadata completeness, schema pattern, and checklist sync
+  const loadedRules = loadRules(repoRoot);
+  const seenRuleIds = new Set();
+  for (const rule of loadedRules) {
+    if (seenRuleIds.has(rule.id)) {
+      throw new Error(`Duplicate Rule ID "${rule.id}" in ${rule.sourceFile}`);
+    }
+    seenRuleIds.add(rule.id);
+
+    if (!rulePattern.test(rule.id)) {
+      throw new Error(`Rule ID "${rule.id}" does not match config.schema.json pattern ${rulePatternRaw}`);
+    }
+    if (!VALID_AUTOMATION_LEVELS.has(rule.automation)) {
+      throw new Error(`Rule "${rule.id}" has invalid automation "${rule.automation}"`);
+    }
+    for (const reqField of ["scope", "rule", "why", "exceptions"]) {
+      if (!rule[reqField] || rule[reqField].trim().length === 0) {
+        throw new Error(`Rule "${rule.id}" in ${rule.sourceFile} is missing "${reqField}"`);
+      }
+    }
+  }
+
+  if (loadedRules.length !== EXPECTED_RULE_IDS.length) {
+    throw new Error(
+      `Expected ${EXPECTED_RULE_IDS.length} parsed rules, got ${loadedRules.length}`,
+    );
+  }
+  for (const expectedId of EXPECTED_RULE_IDS) {
+    if (!seenRuleIds.has(expectedId)) {
+      throw new Error(`Rule ID "${expectedId}" was not parsed by loadRules()`);
+    }
+  }
+
+  const checklistText = fs.readFileSync(path.join(refsDir, "review-checklist.md"), "utf8");
+  for (const rule of loadedRules) {
+    const expectedSev = rule.severity.toUpperCase();
+    const escapedId = rule.id.replace("-", "\\-");
+    const checklistRegex = new RegExp(`\`${escapedId}\`[^\\n]*?\`(MUST|SHOULD|PREFER)\``);
+    const match = checklistText.match(checklistRegex);
+    if (!match) {
+      throw new Error(`review-checklist.md is missing Rule ID "${rule.id}" with severity`);
+    }
+    if (match[1] !== expectedSev) {
+      throw new Error(
+        `review-checklist.md severity mismatch for "${rule.id}": expected ${expectedSev}, got ${match[1]}`,
+      );
+    }
+  }
+
   // Validate agents/*.md
   const agentsDir = path.join(repoRoot, "agents");
   if (!fs.existsSync(agentsDir)) {
@@ -290,7 +347,7 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
   }
   const agentCount = agentFiles.length;
 
-  // Validate commands/*.md
+  // Validate commands/*.md and referenced repo paths
   const commandsDir = path.join(repoRoot, "commands");
   if (!fs.existsSync(commandsDir)) {
     throw new Error("Missing commands/ directory");
@@ -310,6 +367,11 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
       if (!fm[required]) {
         throw new Error(`commands/${fileName}: missing frontmatter field "${required}"`);
       }
+    }
+    const refRegex = /\b((?:skills|agents|bin)\/[A-Za-z0-9_./-]+\.(?:md|mjs))\b/g;
+    let refMatch;
+    while ((refMatch = refRegex.exec(content)) !== null) {
+      assertPathExists(repoRoot, refMatch[1], `commands/${fileName}`, "path reference");
     }
   }
   const commandCount = commandFiles.length;
@@ -347,6 +409,7 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
     skills: skillCount,
     agents: agentCount,
     commands: commandCount,
+    rules: loadedRules.length,
   };
 };
 
@@ -357,7 +420,7 @@ if (isDirectExecution) {
   try {
     const summary = validateRepo(REPO_ROOT);
     process.stdout.write(
-      `Validated v${summary.version}: ${summary.manifests} manifests, ${summary.skills} skills, ${summary.agents} agents, ${summary.commands} commands.\n`,
+      `Validated v${summary.version}: ${summary.manifests} manifests, ${summary.skills} skills, ${summary.agents} agents, ${summary.commands} commands, ${summary.rules} rules.\n`,
     );
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

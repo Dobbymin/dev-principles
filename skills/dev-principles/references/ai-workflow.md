@@ -2,30 +2,76 @@
 
 ### `AI-01` 구현 전 가정 명시 및 모호성 질문 (Think Before Coding)
 - **강도**: `MUST`
+- **자동화**: `manual` — AI/리뷰어가 요구사항 대비 임의 가정 여부를 점검
 - **적용 범위**: 모든 설계·구현·리팩터링 요청
 - **규칙**: 요구사항에 여러 해석이 존재하거나 숨은 가정이 있으면 임의로 선택해 구현하지 않는다. 가정을 명시하고, 모호하면 멈춰서 질문한다. 더 단순한 해법이 있으면 근거와 함께 역제안한다.
 - **이유 (Why)**: 잘못된 가정 위에 쌓인 수백 줄의 코드는 리뷰와 되돌리기 비용이 가장 크다.
+- **예외 / 오탐 방지**: 기존 코드베이스에 명확한 단일 관례가 있거나 사소한 네이밍·포맷 수준인 경우는 불필요하게 작업을 중단하지 않고 가정을 1줄로 명시한다.
+- **Before / After**:
+```ts
+// Bad: 정렬 기준과 페이지네이션 방식이 미정인데 임의로 커서 기반 + 내림차순을 가정해 구현
+
+// Good: "정렬 기준(최신순 vs 인기순)과 페이지네이션(offset vs cursor) 확인 필요"를 먼저 질문 후 확정
+```
 
 ### `AI-02` 단순성 우선 (Simplicity First)
 - **강도**: `SHOULD`
+- **자동화**: `manual` — 과도한 추상화·미요청 옵션·불가능한 방어 분기 리뷰
 - **적용 범위**: 모든 신규 코드 작성 및 추상화 설계
 - **규칙**: 요청을 해결하는 최소한의 코드를 작성한다. 요청받지 않은 기능, 일회성 코드의 과도한 추상화, 미래를 추측한 설정 옵션, 불가능한 시나리오의 방어 코드를 만들지 않는다.
 - **이유 (Why)**: 추측성 추상화는 실제 요구사항이 들어왔을 때 가장 먼저 방해물이 된다.
+- **예외 / 오탐 방지**: 공개 라이브러리 API나 다수의 호출처가 이미 존재하는 공용 유틸리티의 확장 포인트는 과잉 추상화로 보지 않는다.
+- **Before / After**:
+```ts
+// Bad: 1회성 포맷팅을 위해 Strategy 패턴 + 4개 옵션 객체 생성
+function formatPrice(value: number, opts?: { strategy?: "krw" | "usd"; fallback?: string }) { /* ... */ }
+
+// Good: 현재 요구사항(KRW 표기)만 명확히 구현
+function formatKrwPrice(value: number): string {
+  return `${value.toLocaleString("ko-KR")}원`;
+}
+```
 
 ### `AI-03` 외과적 변경 (Surgical Changes)
 - **강도**: `MUST`
+- **자동화**: `hybrid` — `git diff` 범위와 요청 대상 파일 대조 + 리뷰어 검증
 - **적용 범위**: 기존 코드베이스 수정 및 리팩터링
 - **규칙**: 변경한 모든 줄은 사용자 요청과 직접 연결되어야 한다. 인접한 무관한 코드, 주석, 포맷을 임의로 "개선"하지 않는다. 내 변경으로 미사용이 된 import/변수/함수만 제거하고, 기존 데드 코드는 언급만 하고 임의 삭제하지 않는다.
 - **이유 (Why)**: 무관한 변경이 섞이면 PR 리뷰가 어려워지고 의도치 않은 회귀(regression)가 발생한다.
+- **예외 / 오탐 방지**: 포매터(Prettier/Biome) 자동 적용이 프로젝트 CI 필수 게이트인 경우, 수정한 파일의 포맷 정리는 예외로 허용한다.
+- **Before / After**:
+```ts
+// Bad: 버그 수정 PR에서 무관한 주변 함수 3개의 변수명과 주석을 임의 리팩터링
+
+// Good: 버그 원인이 된 조건문과 해당 회귀 테스트만 수정하고, 발견한 기존 데드 코드는 보고만 남김
+```
 
 ### `AI-04` 검증 가능한 목표 기반 실행 (Goal-Driven Execution)
 - **강도**: `SHOULD`
+- **자동화**: `automated` — 계획된 테스트·타입체크·린트·빌드 명령 실행으로 확인
 - **적용 범위**: 버그 수정, 기능 구현, 리팩터링
 - **규칙**: 모호한 목표("잘 되게 고쳐줘")를 검증 가능한 조건(재현 테스트 작성 → 통과, `tsc --noEmit`/린트/단위 테스트 통과)으로 전환해 실행한다. 다단계 작업은 `[단계] → verify: [검증 방법]` 계획을 먼저 세운다.
 - **이유 (Why)**: 명확한 완료 조건이 없으면 수정이 끝났는지 판단할 수 없고 회귀를 놓친다.
+- **예외 / 오탐 방지**: 단순 오탈자 수정이나 순수 문서 변경은 별도 재현 테스트 없이 관련 링크·린트 검사로 대체한다.
+- **Before / After**:
+```text
+// Bad: "로그인 버그 수정 완료" (검증 기준 없음)
+
+// Good:
+// [1] 만료 토큰 401 재시도 실패 재현 테스트 작성 → verify: 테스트 실패 확인
+// [2] skipAuthRefresh 가드 추가 → verify: 해당 테스트 및 tsc --noEmit 통과
+```
 
 ### `AI-05` 최신·버전 민감 API 작업 시 Context7 MCP 우선 조회 및 폴백
 - **강도**: `MUST`
+- **자동화**: `manual` — 설치 버전(`package.json`) 및 공식 문서 대조 리뷰
 - **적용 범위**: React, Next.js, TanStack Query, TypeScript 등 외부 라이브러리 스펙이 관여하는 설계·구현·마이그레이션
-- **규칙**: 버전 민감 API(React 19, Next.js App Router, TanStack Query v5 `queryOptions`/`skipToken`, TS 최신 문법)나 확신이 없는 옵션을 다룰 때는 Context7 MCP(`resolve-library-id` → `query-docs`)로 공식 문서를 먼저 조회한다. 미사용 환경에서는 `package.json` 버전 → `node_modules/<pkg>/**/*.d.ts` → 공식 웹 문서 순으로 폴백하고, 확인 불가 시 미확인 사실을 명시한다.
-- **이유 (Why)**: 학습 시점과 현재 설치 버전 차이로 발생하는 deprecated 옵션·환각 시그니처를 원천 차단한다.
+- **규칙**: 설치된 메이저 버전에 민감한 API(React, Next.js App Router, TanStack Query, TypeScript 등)나 확신이 없는 옵션을 다룰 때는 Context7 MCP(`resolve-library-id` → `query-docs`)로 공식 문서를 먼저 조회한다. 미사용 환경에서는 `package.json` 설치 버전 → `node_modules/<pkg>/**/*.d.ts` → 공식 웹 문서 순으로 폴백하고, 확인 불가 시 미확인 사실을 명시한다.
+- **이유 (Why)**: 모델 학습 시점과 현재 설치 버전 차이로 발생하는 deprecated 옵션·환각 시그니처를 원천 차단한다.
+- **예외 / 오탐 방지**: `.dev-principles.yaml`에서 `context7.mode: off`로 지정된 오프라인 환경에서는 로컬 `package.json` 및 `.d.ts` 확인으로 대체한다.
+- **Before / After**:
+```ts
+// Bad: 설치 버전 확인 없이 구버전 TanStack Query v4의 onSuccess 옵션을 useQuery에 작성
+
+// Good: package.json 버전 및 Context7 공식 문서 확인 후 v5 queryOptions 패턴으로 작성
+```

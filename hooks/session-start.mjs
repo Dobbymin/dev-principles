@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadMergedConfig } from "../scripts/lib/config.mjs";
 
 const DEFAULT_PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -28,6 +29,9 @@ const extractPresetFromYaml = (yamlText) => {
   return match ? match[1] : "auto";
 };
 
+const stripFrontmatter = (markdown) =>
+  markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, "").trim();
+
 export const buildSessionStartPayload = ({
   cwd = process.cwd(),
   env = process.env,
@@ -47,13 +51,29 @@ export const buildSessionStartPayload = ({
   }
 
   const skillPath = path.join(pluginRoot, "skills", "dev-principles", "SKILL.md");
-  const skillContent = fs.existsSync(skillPath)
-    ? fs.readFileSync(skillPath, "utf8").trim()
+  const rawSkill = fs.existsSync(skillPath)
+    ? fs.readFileSync(skillPath, "utf8")
     : "Follow skills/dev-principles/SKILL.md.";
+  const skillContent = stripFrontmatter(rawSkill);
 
-  const modeHeader = configPath
-    ? `dev-principles active (.dev-principles.yaml detected, preset: ${extractPresetFromYaml(fs.readFileSync(configPath, "utf8"))}).`
-    : "dev-principles active (zero-config project detected, preset: auto).";
+  let modeHeader;
+  if (configPath) {
+    let preset = "auto";
+    let extraInfo = "";
+    try {
+      const loaded = loadMergedConfig({ cwd: path.dirname(configPath), env });
+      preset = loaded.config.architecture?.preset ?? "auto";
+      const overrideCount = Object.keys(loaded.config.rules ?? {}).length;
+      const customCount = (loaded.config.customPrinciples ?? []).length;
+      if (overrideCount > 0) extraInfo += `, overrides: ${overrideCount}`;
+      if (customCount > 0) extraInfo += `, customPrinciples: ${customCount}`;
+    } catch {
+      preset = extractPresetFromYaml(fs.readFileSync(configPath, "utf8"));
+    }
+    modeHeader = `dev-principles active (.dev-principles.yaml detected, preset: ${preset}${extraInfo}).`;
+  } else {
+    modeHeader = "dev-principles active (zero-config project detected, preset: auto).";
+  }
 
   const additionalContext = `${modeHeader}\n\n${skillContent}`;
 

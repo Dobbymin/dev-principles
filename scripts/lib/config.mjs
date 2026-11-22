@@ -12,6 +12,7 @@ const TOP_LEVEL_KEYS = new Set([
   "context7",
   "rules",
   "customPrinciples",
+  "ignore",
 ]);
 const ARCH_KEYS = new Set(["preset", "sourceRoot"]);
 const CONTEXT7_KEYS = new Set(["mode", "preferredLibraries"]);
@@ -28,6 +29,7 @@ export const DEFAULT_CONFIG = {
   },
   rules: {},
   customPrinciples: [],
+  ignore: [],
 };
 
 const stripInlineComment = (raw) => {
@@ -48,6 +50,11 @@ const parseScalar = (raw) => {
   const val = stripInlineComment(raw);
   if (val === "[]") return [];
   if (val === "{}") return {};
+  if (val.startsWith("[") && val.endsWith("]")) {
+    const inner = val.slice(1, -1).trim();
+    if (!inner) return [];
+    return inner.split(",").map((part) => parseScalar(part.trim()));
+  }
   if (val === "true") return true;
   if (val === "false") return false;
   if (/^-?\d+$/.test(val)) return Number(val);
@@ -175,6 +182,19 @@ export const loadMergedConfig = ({ cwd = process.cwd(), env = process.env, globa
   };
 };
 
+export const checkCustomPrinciplePaths = (cwd, config) => {
+  const warnings = [];
+  const root = path.resolve(cwd);
+  for (const rel of config?.customPrinciples ?? []) {
+    if (typeof rel !== "string" || !rel.trim()) continue;
+    const target = path.resolve(root, path.normalize(rel));
+    if (!fs.existsSync(target)) {
+      warnings.push(`customPrinciples path does not exist: "${rel}"`);
+    }
+  }
+  return warnings;
+};
+
 export const validateConfig = (config, knownRuleIds) => {
   const errors = [];
   const warnings = [];
@@ -259,19 +279,21 @@ export const validateConfig = (config, knownRuleIds) => {
         }
         if (SECURITY_INVARIANTS.has(ruleId) && severity === "off") {
           warnings.push(
-            `Security invariant "${ruleId}" cannot be disabled via "off"; core token-storage rule remains active.`,
+            `Security invariant "${ruleId}" cannot be disabled via "off"; core security rule remains active.`,
           );
         }
       }
     }
   }
 
-  if (
-    config.customPrinciples !== undefined &&
-    (!Array.isArray(config.customPrinciples) ||
-      config.customPrinciples.some((item) => typeof item !== "string" || !item))
-  ) {
-    errors.push('"customPrinciples" must be an array of non-empty strings.');
+  for (const arrayField of ["customPrinciples", "ignore"]) {
+    if (
+      config[arrayField] !== undefined &&
+      (!Array.isArray(config[arrayField]) ||
+        config[arrayField].some((item) => typeof item !== "string" || !item))
+    ) {
+      errors.push(`"${arrayField}" must be an array of non-empty strings.`);
+    }
   }
 
   return { errors, warnings };
