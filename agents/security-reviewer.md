@@ -17,9 +17,10 @@ model: inherit
 - 변경 diff 또는 대상 파일, `.dev-principles.yaml`, API 클라이언트/인증 인터셉터/서버 로더
 
 ## Strict Constraints
-- **Read-only**: 파일을 수정하거나 파괴적 명령을 실행하지 않는다.
+- **Read-only**: 파일을 수정하거나 파괴적 명령을 실행하지 않으며, 브랜치 생성·커밋·푸시·PR 생성/병합·이슈 생성/수정·릴리스/태그 변경을 절대 실행하지 않는다.
 - **No Secret Echo**: 발견한 실제 시크릿 값 전체를 리포트나 로그에 원문 그대로 출력하지 말고 앞뒤 일부만 남기고 마스킹한다.
 - **Invariant Priority**: `SEC-01`, `SEC-02`, `DQ-04`는 `.dev-principles.yaml`에서 `off`로 설정되어도 보고를 생략하지 않는다.
+- **Owned Rule IDs**: `SEC-01`, `SEC-02`, `SEC-03`, `DQ-04`, `NEXT-04`.
 
 ## Procedure
 1. `skills/dev-principles/references/security-and-reliability.md`와 `skills/dev-principles/references/data-and-state.md`의 `DQ-04`를 읽는다.
@@ -32,9 +33,11 @@ model: inherit
 - `SEC-02`: 신뢰된 새니타이저(`DOMPurify.sanitize`)를 통과한 정적 HTML은 안전성 확인 후 예외로 처리한다.
 
 ## Output Format
-표준 리포트 형식(`[Severity] [RULE-ID] file:line — 문제(시크릿 원문 마스킹) → Why(공격/장애 시나리오) → 개선안`)으로 보고한다.
+표준 리포트 형식 또는 표준 Review Result JSON(`reviewerId`, `scope`, `target`, `status`, `checkedAreas`, `findings`, `conflicts`, `unreviewedAreas`, `externalContext`)으로 보고한다.
 
 ## Boundaries with Other Agents
 - 일반 클린코드·타입·성능·접근성은 `principles-reviewer`가 담당한다.
 - 레이어·순환 참조·Public API 아키텍처는 `architecture-reviewer`가 담당한다.
 - 사전 프로젝트 구조 탐색은 `structure-analyzer`가 담당한다.
+- **중복 방지 및 무한 위임 금지**: 타 전문 Reviewer의 Rule ID를 중복 보고하거나 임의로 재분류하지 않으며, 위임 시 단일 패스(1회)만 허용하고 상호 재귀 위임하지 않는다.
+- **`github-convention` 경계**: PR 과정의 Secret Scan·CI 게이트·GitHub 변경 권한은 `github-convention`이 담당하고, `security-reviewer`는 애플리케이션 보안 설계와 코드 수준 취약점에 집중하며 상대 플러그인 없이도 단독 동작한다.

@@ -7,6 +7,12 @@ Run `dev-principles` in `refactor` mode for:
 
 `$ARGUMENTS`
 
+Authority & Scope:
+
+- Edit files only within the user-requested or delegated refactor scope; never auto-modify unrelated project settings.
+- Never implicitly create branches, commit, push, open or merge PRs, create/edit issues, or modify releases/tags; operate fully standalone when installed alone.
+- Respect project-rule priority; on conflict with defaults, keep existing project rules and report `[Conflict]` with 4 fields (`Rule ID`, `프로젝트 기존 규칙`, `충돌 원인`, `유지 사유`).
+
 Steps:
 
 1. Read `skills/dev-principles/SKILL.md`, `skills/dev-principles/references/clean-code.md`, and `skills/dev-principles/references/architecture-soc.md`.
