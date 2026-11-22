@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ -f package.json ] && [ -f scripts/validate.mjs ]; then
+  npm run check
+fi

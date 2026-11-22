@@ -1,0 +1,7 @@
+.harness/state/active/
+node_modules/
+**/dist/
+
+_workspace/
+.DS_Store
+Thumbs.db
