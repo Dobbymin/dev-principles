@@ -560,6 +560,9 @@ export const runStaticChecks = ({
         { name: "GitHub Token", regex: /\b(?:ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})\b/g },
         { name: "Anthropic/OpenAI API Key", regex: /\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b/g },
         { name: "Private Key Block", regex: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g },
+        { name: "Stripe Secret Key", regex: /\b[sr]k_live_[A-Za-z0-9]{24,}\b/g },
+        { name: "Slack Token", regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
+        { name: "Google API Key", regex: /\bAIza[0-9A-Za-z_-]{35}\b/g },
       ];
       for (const { name, regex } of secretPatterns) {
         let m;

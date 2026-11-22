@@ -274,3 +274,42 @@ test("dev-principles check --staged and --changed scope to git changes", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("SEC-01 detects Stripe, Slack, and Google keys and skips placeholders", () => {
+  const dir = makeTempDir();
+  const rules = loadRules(REPO_ROOT);
+  // Built at runtime so this file never contains a scannable secret literal.
+  const stripe = ["sk", "live", "a1B2c3D4e5F6g7H8i9J0k1L2m3"].join("_");
+  const stripeRestricted = ["rk", "live", "a1B2c3D4e5F6g7H8i9J0k1L2m3"].join("_");
+  const slack = ["xoxb", "123456789012", "abcdefABCDEF"].join("-");
+  const google = `AIza${"a1B2c3D4e5".repeat(3)}a1B2c`;
+  const placeholder = ["sk", "live", "example1234567890123456789012"].join("_");
+  try {
+    writeFixtureFile(
+      dir,
+      "src/keys.ts",
+      [
+        `export const a = "${stripe}";`,
+        `export const b = "${stripeRestricted}";`,
+        `export const c = "${slack}";`,
+        `export const d = "${google}";`,
+        `export const e = "${placeholder}";`,
+        "",
+      ].join("\n"),
+    );
+    writeFixtureFile(dir, "src/keys.test.ts", `export const t = "${stripe}";\n`);
+
+    const result = runStaticChecks({
+      cwd: dir,
+      preset: "feature-based",
+      ruleFilter: "SEC-01",
+      rules,
+      config: { architecture: { preset: "feature-based", sourceRoot: "src" } },
+    });
+    const lines = result.findings.map((f) => `${f.file}:${f.line}`).sort();
+    assert.deepEqual(lines, ["src/keys.ts:1", "src/keys.ts:2", "src/keys.ts:3", "src/keys.ts:4"]);
+    assert.ok(result.findings.every((f) => f.ruleId === "SEC-01"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
