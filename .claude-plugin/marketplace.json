@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "dev-principles",
+  "owner": {
+    "name": "Dobbymin",
+    "url": "https://github.com/Dobbymin"
+  },
+  "metadata": {
+    "description": "Multi-harness engineering principles plugin with Rule IDs, opt-in architecture presets, review agents, and zero-dependency utilities.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "dev-principles",
+      "source": "./",
+      "description": "TypeScript/React/Next.js frontend and general software engineering principles skill, review agents, slash commands, and config utilities.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "tags": ["dev-principles", "clean-code", "typescript", "architecture", "react", "nextjs"]
+    }
+  ]
+}

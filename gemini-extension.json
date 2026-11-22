@@ -1,0 +1,6 @@
+{
+  "name": "dev-principles",
+  "version": "0.1.0",
+  "description": "TypeScript/React/Next.js frontend and general software engineering principles skill, review agents, slash commands, and config utilities.",
+  "contextFileName": "skills/dev-principles/SKILL.md"
+}
