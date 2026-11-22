@@ -11,5 +11,6 @@
   "repository": "https://github.com/Dobbymin/dev-principles",
   "license": "MIT",
   "keywords": ["dev-principles", "clean-code", "typescript", "architecture", "react", "nextjs", "agent-skill"],
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
 }

@@ -256,70 +256,80 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
     }
   }
 
-  let agentCount = 0;
+  // Validate agents/*.md
   const agentsDir = path.join(repoRoot, "agents");
-  if (fs.existsSync(agentsDir)) {
-    const agentFiles = fs
-      .readdirSync(agentsDir, { withFileTypes: true })
-      .filter((f) => f.isFile() && f.name.endsWith(".md"))
-      .map((f) => f.name)
-      .sort();
-    for (const fileName of agentFiles) {
-      const content = fs.readFileSync(path.join(agentsDir, fileName), "utf8");
-      const fm = parseFrontmatter(content, `agents/${fileName}`);
-      for (const required of ["name", "description", "model"]) {
-        if (!fm[required]) {
-          throw new Error(`agents/${fileName}: missing frontmatter field "${required}"`);
-        }
+  if (!fs.existsSync(agentsDir)) {
+    throw new Error("Missing agents/ directory");
+  }
+  const agentFiles = fs
+    .readdirSync(agentsDir, { withFileTypes: true })
+    .filter((f) => f.isFile() && f.name.endsWith(".md"))
+    .map((f) => f.name)
+    .sort();
+  if (agentFiles.length === 0) {
+    throw new Error("agents/ directory contains no agent definitions");
+  }
+  for (const fileName of agentFiles) {
+    const content = fs.readFileSync(path.join(agentsDir, fileName), "utf8");
+    const fm = parseFrontmatter(content, `agents/${fileName}`);
+    for (const required of ["name", "description", "model"]) {
+      if (!fm[required]) {
+        throw new Error(`agents/${fileName}: missing frontmatter field "${required}"`);
       }
-      if (fm.tools !== undefined) {
-        throw new Error(
-          `agents/${fileName}: omit platform-specific "tools" field for cross-harness compatibility`,
-        );
-      }
-      agentCount += 1;
+    }
+    if (fm.tools !== undefined) {
+      throw new Error(
+        `agents/${fileName}: omit platform-specific "tools" field for cross-harness compatibility`,
+      );
     }
   }
+  const agentCount = agentFiles.length;
 
-  let commandCount = 0;
+  // Validate commands/*.md
   const commandsDir = path.join(repoRoot, "commands");
-  if (fs.existsSync(commandsDir)) {
-    const commandFiles = fs
-      .readdirSync(commandsDir, { withFileTypes: true })
-      .filter((f) => f.isFile() && f.name.endsWith(".md"))
-      .map((f) => f.name)
-      .sort();
-    for (const fileName of commandFiles) {
-      const content = fs.readFileSync(path.join(commandsDir, fileName), "utf8");
-      const fm = parseFrontmatter(content, `commands/${fileName}`);
-      for (const required of ["description", "argument-hint"]) {
-        if (!fm[required]) {
-          throw new Error(`commands/${fileName}: missing frontmatter field "${required}"`);
-        }
+  if (!fs.existsSync(commandsDir)) {
+    throw new Error("Missing commands/ directory");
+  }
+  const commandFiles = fs
+    .readdirSync(commandsDir, { withFileTypes: true })
+    .filter((f) => f.isFile() && f.name.endsWith(".md"))
+    .map((f) => f.name)
+    .sort();
+  if (commandFiles.length === 0) {
+    throw new Error("commands/ directory contains no command definitions");
+  }
+  for (const fileName of commandFiles) {
+    const content = fs.readFileSync(path.join(commandsDir, fileName), "utf8");
+    const fm = parseFrontmatter(content, `commands/${fileName}`);
+    for (const required of ["description", "argument-hint"]) {
+      if (!fm[required]) {
+        throw new Error(`commands/${fileName}: missing frontmatter field "${required}"`);
       }
-      commandCount += 1;
     }
   }
+  const commandCount = commandFiles.length;
 
+  // Validate hooks/hooks.json
   const hooksJsonPath = path.join(repoRoot, "hooks", "hooks.json");
-  if (fs.existsSync(hooksJsonPath)) {
-    const hooksJson = readJson(hooksJsonPath);
-    if (!hooksJson.hooks || typeof hooksJson.hooks !== "object") {
-      throw new Error("hooks/hooks.json: missing top-level 'hooks' object");
+  if (!fs.existsSync(hooksJsonPath)) {
+    throw new Error("Missing hooks/hooks.json");
+  }
+  const hooksJson = readJson(hooksJsonPath);
+  if (!hooksJson.hooks || typeof hooksJson.hooks !== "object") {
+    throw new Error("hooks/hooks.json: missing top-level 'hooks' object");
+  }
+  for (const [eventName, entries] of Object.entries(hooksJson.hooks)) {
+    if (!Array.isArray(entries)) {
+      throw new Error(`hooks/hooks.json: hooks.${eventName} must be an array`);
     }
-    for (const [eventName, entries] of Object.entries(hooksJson.hooks)) {
-      if (!Array.isArray(entries)) {
-        throw new Error(`hooks/hooks.json: hooks.${eventName} must be an array`);
-      }
-      for (const entry of entries) {
-        for (const hook of entry.hooks ?? []) {
-          const cmd = String(hook.command ?? "");
-          const refMatch = cmd.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^\s"']+)/g);
-          if (refMatch) {
-            for (const ref of refMatch) {
-              const rel = ref.replace("${CLAUDE_PLUGIN_ROOT}/", "");
-              assertPathExists(repoRoot, rel, "hooks/hooks.json", `hooks.${eventName}`);
-            }
+    for (const entry of entries) {
+      for (const hook of entry.hooks ?? []) {
+        const cmd = String(hook.command ?? "");
+        const refMatch = cmd.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^\s"']+)/g);
+        if (refMatch) {
+          for (const ref of refMatch) {
+            const rel = ref.replace("${CLAUDE_PLUGIN_ROOT}/", "");
+            assertPathExists(repoRoot, rel, "hooks/hooks.json", `hooks.${eventName}`);
           }
         }
       }
