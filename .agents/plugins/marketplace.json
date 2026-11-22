@@ -1,0 +1,20 @@
+{
+  "name": "dev-principles",
+  "interface": {
+    "displayName": "Dev Principles"
+  },
+  "plugins": [
+    {
+      "name": "dev-principles",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

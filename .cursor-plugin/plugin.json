@@ -1,0 +1,14 @@
+{
+  "name": "dev-principles",
+  "displayName": "Dev Principles",
+  "version": "0.1.0",
+  "description": "TypeScript/React/Next.js frontend and general software engineering principles skill, review agents, slash commands, and config utilities.",
+  "author": {
+    "name": "Dobbymin",
+    "url": "https://github.com/Dobbymin"
+  },
+  "homepage": "https://github.com/Dobbymin/dev-principles",
+  "repository": "https://github.com/Dobbymin/dev-principles",
+  "license": "MIT",
+  "keywords": ["dev-principles", "clean-code", "typescript", "architecture", "react", "nextjs", "agent-skill"]
+}

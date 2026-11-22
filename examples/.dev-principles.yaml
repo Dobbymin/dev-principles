@@ -1,0 +1,22 @@
+version: 1
+
+# Architecture preset: auto | feature-based | fsd | next-app-router
+architecture:
+  preset: auto
+  sourceRoot: src
+
+# Context7 MCP lookup policy: auto | strict | off
+context7:
+  mode: auto
+  preferredLibraries:
+    - react
+    - next.js
+    - "@tanstack/react-query"
+    - typescript
+
+# Rule ID severity overrides: must | should | prefer | off
+rules:
+  CC-04: off
+
+# Project-specific principle documents (optional)
+customPrinciples: []

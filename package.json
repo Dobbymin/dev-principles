@@ -1,0 +1,17 @@
+{
+  "name": "dev-principles",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepare": "node scripts/setup-git-hooks.mjs",
+    "validate": "node scripts/validate.mjs",
+    "garden": "node scripts/garden.mjs",
+    "test": "node --test \"scripts/tests/**/*.test.mjs\"",
+    "check": "npm run validate && npm run garden && npm test"
+  }
+}

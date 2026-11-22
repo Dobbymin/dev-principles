@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Dobbymin/dev-principles/main/schemas/config.schema.json",
+  "title": "dev-principles configuration",
+  "description": "Project or global configuration schema for .dev-principles.yaml",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Configuration schema version"
+    },
+    "architecture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preset": {
+          "type": "string",
+          "enum": ["auto", "feature-based", "fsd", "next-app-router"],
+          "default": "auto",
+          "description": "Architecture preset applied on top of core SoC rules"
+        },
+        "sourceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "default": "src",
+          "description": "Primary source directory relative to project root"
+        }
+      }
+    },
+    "context7": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["auto", "strict", "off"],
+          "default": "auto",
+          "description": "Context7 MCP lookup policy for version-sensitive APIs"
+        },
+        "preferredLibraries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Libraries prioritized for Context7 lookup"
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "description": "Per-Rule ID severity overrides (must | should | prefer | off)",
+      "propertyNames": {
+        "pattern": "^(AI|CC|TS|SOC|DQ|FB|FSD|NEXT)-[0-9]{2}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["must", "should", "prefer", "off"]
+      }
+    },
+    "customPrinciples": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Relative paths to project-specific principle markdown files"
+    }
+  }
+}
