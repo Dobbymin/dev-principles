@@ -95,8 +95,9 @@ export const resolveEffectiveRules = (rules, config, presetOverride = null) => {
     .map((rule) => {
       const override = overrides[rule.id];
       const isSecurityInvariant = SECURITY_INVARIANTS.has(rule.id);
-      const effectiveSeverity =
-        override && !(isSecurityInvariant && override === "off") ? override : rule.severity;
+      const effectiveSeverity = isSecurityInvariant
+        ? "must"
+        : override || rule.severity;
       return {
         ...rule,
         defaultSeverity: rule.severity,

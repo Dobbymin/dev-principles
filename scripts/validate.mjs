@@ -211,6 +211,17 @@ export const validateRepo = (repoRoot = REPO_ROOT) => {
     throw new Error("Missing bin/dev-principles.mjs");
   }
 
+  for (const shRel of ["install.sh", "uninstall.sh", "scripts/lib/ownership.sh"]) {
+    const shFull = path.join(repoRoot, path.normalize(shRel));
+    if (!fs.existsSync(shFull)) {
+      throw new Error(`Missing shell script: ${shRel}`);
+    }
+    const shContent = fs.readFileSync(shFull, "utf8");
+    if (shContent.includes("\r\n")) {
+      throw new Error(`${shRel}: must use LF line endings for POSIX/Git Bash compatibility`);
+    }
+  }
+
   // Validate skills/dev-principles and references
   const skillsDir = path.join(repoRoot, "skills");
   if (!fs.existsSync(skillsDir)) {

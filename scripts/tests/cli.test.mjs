@@ -111,12 +111,32 @@ extraKey: true
     const badResult = validateConfig(bad, knownIds);
     assert.ok(badResult.errors.length >= 3);
 
-    // Security invariants stay must even when YAML sets off
+    // Security invariants stay must even when YAML sets off or attempts downgrade to should/prefer
     const effective = resolveEffectiveRules(loadRules(REPO_ROOT), loaded.config);
     for (const invId of ["DQ-04", "SEC-01", "SEC-02"]) {
       const rule = effective.find((r) => r.id === invId);
       assert.equal(rule.effectiveSeverity, "must", `${invId} must remain must`);
     }
+
+    const downgradedConfig = parseYamlConfig(
+      `version: 1\nignore: ["src/a,b", "src/c"]\nrules:\n  SEC-01: should\n  DQ-04: prefer\n`,
+    );
+    assert.deepEqual(downgradedConfig.ignore, ["src/a,b", "src/c"]);
+    const downgradeVal = validateConfig(downgradedConfig, knownIds);
+    assert.equal(downgradeVal.errors.length, 0);
+    assert.ok(downgradeVal.warnings.some((w) => w.includes('Security invariant "SEC-01" cannot be downgraded')));
+    assert.ok(downgradeVal.warnings.some((w) => w.includes('Security invariant "DQ-04" cannot be downgraded')));
+    const effectiveDowngraded = resolveEffectiveRules(loadRules(REPO_ROOT), downgradedConfig);
+    assert.equal(effectiveDowngraded.find((r) => r.id === "SEC-01").effectiveSeverity, "must");
+    assert.equal(effectiveDowngraded.find((r) => r.id === "DQ-04").effectiveSeverity, "must");
+
+    // Nested subdirectory lookup resolves ancestor project root config and package.json
+    const subDir = path.join(dir, "src", "features", "auth");
+    fs.mkdirSync(subDir, { recursive: true });
+    const subLoaded = loadMergedConfig({ cwd: subDir, globalPath });
+    assert.equal(subLoaded.hasProject, true);
+    assert.equal(subLoaded.config.architecture.preset, "fsd");
+    assert.equal(detectProject(subDir).root, dir);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(globalDir, { recursive: true, force: true });

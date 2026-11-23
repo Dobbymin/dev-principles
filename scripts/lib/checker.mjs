@@ -225,7 +225,7 @@ const hasUseClientDirective = (text) => {
 const parseImports = (text) => {
   const masked = maskCommentsKeepLines(text);
   const imports = [];
-  const regex = /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[^;"'\n]+?\s+from\s+)?["']([^"'\n]+)["']/g;
+  const regex = /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[^;"']+?\s+from\s+)?["']([^"'\n]+)["']/g;
   let match;
   while ((match = regex.exec(masked)) !== null) {
     imports.push({

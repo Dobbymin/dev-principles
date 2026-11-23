@@ -307,8 +307,101 @@ test("SEC-01 detects Stripe, Slack, and Google keys and skips placeholders", () 
       config: { architecture: { preset: "feature-based", sourceRoot: "src" } },
     });
     const lines = result.findings.map((f) => `${f.file}:${f.line}`).sort();
+    assert.equal(lines.length, 4);
     assert.deepEqual(lines, ["src/keys.ts:1", "src/keys.ts:2", "src/keys.ts:3", "src/keys.ts:4"]);
     assert.ok(result.findings.every((f) => f.ruleId === "SEC-01"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("checker parses multiline imports, validates --rule IDs, supports text --out, and filters by --pr-context paths", () => {
+  const dir = makeTempDir();
+  const rules = loadRules(REPO_ROOT);
+  try {
+    writeFixtureFile(
+      dir,
+      ".dev-principles.yaml",
+      `version: 1\narchitecture:\n  preset: fsd\n  sourceRoot: src\n`,
+    );
+    writeFixtureFile(
+      dir,
+      "src/features/auth/model/login.ts",
+      `export const loginUser = () => "ok";\nexport const extraHelper = () => "ok";\n`,
+    );
+    // Multiline import from entities -> features (FSD-01 + FSD-03)
+    writeFixtureFile(
+      dir,
+      "src/entities/user/model/user.ts",
+      [
+        "import {",
+        "  loginUser,",
+        "  extraHelper,",
+        '} from "../../../features/auth/model/login";',
+        "export const user = loginUser();",
+        "",
+      ].join("\n"),
+    );
+    // Unrelated file with TS-02 violation
+    writeFixtureFile(dir, "src/shared/legacy.ts", `export const oldVal: any = 1;\n`);
+
+    const res = runStaticChecks({
+      cwd: dir,
+      preset: "fsd",
+      rules,
+      config: { architecture: { preset: "fsd", sourceRoot: "src" } },
+    });
+    assert.ok(res.findings.some((f) => f.ruleId === "FSD-01" && f.file === "src/entities/user/model/user.ts"));
+    assert.ok(res.findings.some((f) => f.ruleId === "FSD-03" && f.file === "src/entities/user/model/user.ts"));
+
+    // Invalid --rule ID fails immediately with clear error
+    assert.throws(() => {
+      execFileSync(process.execPath, [BIN_PATH, "check", "--cwd", dir, "--rule", "UNKNOWN-99"], {
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+    }, /Unknown --rule "UNKNOWN-99"/);
+
+    // Running check from nested subdirectory resolves ancestor config and scopes to subdirectory
+    const subCwd = path.join(dir, "src", "shared");
+    const textOutPath = path.join(dir, "reports", "check.txt");
+    let subCheckErr = null;
+    try {
+      execFileSync(process.execPath, [BIN_PATH, "check", "--cwd", subCwd, "--out", textOutPath], {
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+    } catch (err) {
+      subCheckErr = err;
+    }
+    assert.ok(subCheckErr);
+    assert.equal(fs.existsSync(textOutPath), true);
+    const savedText = fs.readFileSync(textOutPath, "utf8");
+    assert.match(savedText, /preset: fsd, files: 1/);
+    assert.match(savedText, /\[TS-02\] src\/shared\/legacy\.ts:1/);
+
+    // --pr-context paths filter scopes static check only to listed PR files
+    const prContextPath = path.join(dir, "pr-ctx.json");
+    writeFixtureFile(
+      dir,
+      "pr-ctx.json",
+      JSON.stringify({
+        source: "github-convention",
+        prNumber: 19,
+        baseRef: "main",
+        commit: "abc1234",
+        paths: ["src/features/auth/model/login.ts"],
+      }),
+    );
+    const prOut = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [BIN_PATH, "check", "--cwd", dir, "--format", "review-result", "--pr-context", prContextPath],
+        { encoding: "utf8" },
+      ),
+    );
+    assert.equal(prOut.status, "completed");
+    assert.equal(prOut.findings.length, 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
