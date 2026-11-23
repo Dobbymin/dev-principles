@@ -64,97 +64,7 @@ validate_skill_name() {
   esac
 }
 
-is_owned_symlink() {
-  _dest="$1"
-  _expected="$2"
-  _raw_target="$(readlink "$_dest" 2>/dev/null || true)"
-  [ -n "$_raw_target" ] || return 1
-  case "$_raw_target" in
-    /*|[A-Za-z]:/*|[A-Za-z]:\\*) _candidate="$_raw_target" ;;
-    *) _candidate="$(dirname -- "$_dest")/$_raw_target" ;;
-  esac
-  if [ -d "$_candidate" ]; then
-    _resolved="$(resolve_dir "$_candidate" || true)"
-    [ -n "$_resolved" ] && [ "$_resolved" = "$_expected" ]
-    return $?
-  fi
-  _norm_candidate="$(normalize_path_for_compare "$_candidate")"
-  _norm_expected="$(normalize_path_for_compare "$_expected")"
-  [ "$_norm_candidate" = "$_norm_expected" ]
-}
-
-has_foreign_marker() {
-  _dest="$1"
-  for _m in "$_dest"/.*-script-managed; do
-    [ -e "$_m" ] || [ -L "$_m" ] || continue
-    if [ "$(basename -- "$_m")" != "$MARKER_FILE" ]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-file_has_exact_line() {
-  _file="$1"
-  _line="$2"
-  tr -d '\r' < "$_file" 2>/dev/null | grep -qx "$_line" 2>/dev/null
-}
-
-file_has_prefix() {
-  _file="$1"
-  _prefix="$2"
-  tr -d '\r' < "$_file" 2>/dev/null | grep -q "^$_prefix" 2>/dev/null
-}
-
-is_owned_copy_dir() {
-  _dest="$1"
-  _skill_name="$2"
-  [ -d "$_dest" ] && [ ! -L "$_dest" ] || return 1
-  [ -f "$_dest/$MARKER_FILE" ] && [ ! -L "$_dest/$MARKER_FILE" ] || return 1
-  if has_foreign_marker "$_dest"; then
-    return 1
-  fi
-  if file_has_exact_line "$_dest/$MARKER_FILE" 'managed_by=install\.sh' ||
-     file_has_exact_line "$_dest/$MARKER_FILE" 'managed-by=install\.sh'; then
-    :
-  else
-    return 1
-  fi
-  if file_has_prefix "$_dest/$MARKER_FILE" 'plugin='; then
-    file_has_exact_line "$_dest/$MARKER_FILE" 'plugin=dev-principles' || return 1
-  else
-    # Legacy v0.1 marker migration: require SKILL.md frontmatter name match
-    [ -f "$_dest/SKILL.md" ] || return 1
-    file_has_exact_line "$_dest/SKILL.md" "name: $_skill_name" || return 1
-  fi
-  if file_has_prefix "$_dest/$MARKER_FILE" 'skill='; then
-    file_has_exact_line "$_dest/$MARKER_FILE" "skill=$_skill_name" || return 1
-  fi
-  return 0
-}
-
-verify_dest_ownership() {
-  _dest="$1"
-  _skill_name="$2"
-  _expected="$3"
-
-  if [ -L "$_dest" ]; then
-    if ! is_owned_symlink "$_dest" "$_expected"; then
-      _link_target="$(readlink "$_dest" 2>/dev/null || true)"
-      echo "Refusing to overwrite symlink not owned by dev-principles: $_dest -> $_link_target (expected: $_expected)" >&2
-      return 1
-    fi
-  elif [ -d "$_dest" ]; then
-    if ! is_owned_copy_dir "$_dest" "$_skill_name"; then
-      echo "Refusing to overwrite unmanaged directory: $_dest" >&2
-      return 1
-    fi
-  elif [ -e "$_dest" ]; then
-    echo "Refusing to overwrite existing non-directory file: $_dest" >&2
-    return 1
-  fi
-  return 0
-}
+. "$CANONICAL_SCRIPT_DIR/scripts/lib/ownership.sh"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -218,6 +128,7 @@ if [ -z "$TARGET" ] || [ "$TARGET" = "/" ]; then
   echo "Refusing unsafe target directory: $TARGET" >&2
   exit 1
 fi
+reject_unsafe_target "$TARGET" || exit 1
 
 while [ "$TARGET" != "/" ] && [ "${TARGET%/}" != "$TARGET" ]; do
   TARGET="${TARGET%/}"
@@ -241,7 +152,7 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
   DEST="$TARGET/$SKILL_NAME"
   SKILL_COUNT=$((SKILL_COUNT + 1))
 
-  verify_dest_ownership "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" || exit 1
+  verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite || exit 1
 done
 
 if [ "$SKILL_COUNT" -eq 0 ]; then
@@ -273,16 +184,14 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
   CANONICAL_DEST="$CANONICAL_TARGET/$SKILL_NAME"
 
   if [ "$MODE" = "symlink" ]; then
-    verify_dest_ownership "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" || exit 1
-    if [ -L "$DEST" ]; then
-      rm "$DEST"
-    elif [ -d "$DEST" ]; then
-      rm -rf "$DEST"
+    verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite || exit 1
+    if [ -L "$DEST" ] || [ -d "$DEST" ]; then
+      remove_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" || exit 1
     fi
     if is_windows_shell; then
       if ! MSYS="winsymlinks:nativestrict" ln -s "$CANONICAL_SKILL_DIR" "$DEST" 2>/dev/null || [ ! -L "$DEST" ]; then
-        if [ -e "$DEST" ] && [ ! -L "$DEST" ]; then
-          rm -rf "$DEST"
+        if [ -L "$DEST" ]; then
+          rm -- "$DEST"
         fi
         echo "Symlink creation failed on Windows; enable Developer Mode or pass --copy." >&2
         exit 1
@@ -293,11 +202,16 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
     echo "Installed symlink: $DEST -> $CANONICAL_SKILL_DIR"
   else
     STAGING_DIR="$TARGET/.${SKILL_NAME}.dev-principles.tmp.$$"
-    rm -rf "$STAGING_DIR"
+    if [ -e "$STAGING_DIR" ] || [ -L "$STAGING_DIR" ]; then
+      echo "Staging path already exists: $STAGING_DIR" >&2
+      STAGING_DIR=""
+      exit 1
+    fi
     mkdir -p "$STAGING_DIR"
     cp -R "$CANONICAL_SKILL_DIR"/. "$STAGING_DIR"/
+    MANIFEST="$(cd "$STAGING_DIR" && find . -type f | sed 's|^\./||' | LC_ALL=C sort)"
     {
-      printf "schema_version=1\n"
+      printf "schema_version=2\n"
       printf "plugin=dev-principles\n"
       printf "managed_by=install.sh\n"
       printf "managed-by=install.sh\n"
@@ -306,13 +220,12 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
       printf "install_path=%s\n" "$CANONICAL_DEST"
       printf "source_path=%s\n" "$CANONICAL_SKILL_DIR"
       printf "link_target=\n"
+      printf '%s\n' "$MANIFEST" | sed 's/^/file=/'
     } > "$STAGING_DIR/$MARKER_FILE"
 
-    verify_dest_ownership "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" || exit 1
-    if [ -L "$DEST" ]; then
-      rm "$DEST"
-    elif [ -d "$DEST" ]; then
-      rm -rf "$DEST"
+    verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite || exit 1
+    if [ -L "$DEST" ] || [ -d "$DEST" ]; then
+      remove_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" || exit 1
     fi
     mv "$STAGING_DIR" "$DEST"
     STAGING_DIR=""

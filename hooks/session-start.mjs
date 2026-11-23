@@ -187,7 +187,7 @@ export const detectCompanionPlugins = ({ cwd = process.cwd(), projectRoot = null
 const buildStandaloneDigest = ({ modeHeader, localConventions }) => {
   const lines = [
     modeHeader,
-    "",
+    "Purpose: Apply Rule-ID code quality, design, architecture/SoC, TypeScript type safety, and application security principles without forcing folder structures.",
     "Priority: 1. Security invariants (SEC-01/SEC-02/DQ-04, no implicit destructive actions) > 2. Project config (.dev-principles.yaml) & official rules > 3. Global config > 4. dev-principles defaults.",
     "Conflict rule: Keep existing project rules on conflict and report `[Conflict] <RULE-ID> <-> <project rule> | cause: <cause> | reason: <why kept>`.",
   ];
@@ -197,13 +197,15 @@ const buildStandaloneDigest = ({ modeHeader, localConventions }) => {
   }
 
   lines.push(
-    "Core MUST: AI-01/03/05 (clarify ambiguity, surgical edits, Context7 MCP), TS-02 (no any), SOC-01/04/06 (SoC, unidirectional deps, no forced structure), DQ-02/04 (single apiClient, memory access token + skipAuthRefresh), SEC-01/02 (no secret exposure/XSS/injection), TEST-03 (fresh verification). Workflows: Track S/M/L.",
+    "Tracks: Track S (1-2 files bugfix/tweak) | Track M (standard feature/refactor) | Track L (multi-module/architecture change).",
+    "Core MUST: AI-01/03/05 (clarify ambiguity, surgical edits, Context7 MCP), TS-02 (no any), SOC-01/04/06 (SoC, unidirectional deps, no forced structure), DQ-02/04 (single apiClient, memory access token + skipAuthRefresh), SEC-01/02 (no secret exposure/XSS/injection), TEST-03 (fresh verification).",
     "Progressive disclosure (load on demand by task):",
     "- Design/Implement: `skills/dev-principles/SKILL.md`, `references/workflow-guide.md`, `ai-workflow.md`, `clean-code.md`, `typescript.md`, `data-and-state.md`",
     "- Refactor: `references/clean-code.md`, `architecture-soc.md`, `performance-and-a11y.md`",
     "- General review: `references/review-checklist.md` + `agents/principles-reviewer.md`",
     "- Architecture review: `references/architecture-soc.md`, `presets/*.md` + `agents/architecture-reviewer.md`",
     "- Security review: `references/security-and-reliability.md`, `data-and-state.md` (`DQ-04`) + `agents/security-reviewer.md`",
+    "Commands: `/dp-design`, `/dp-refactor`, `/dp-review`, `/dp-check`, `/dp-doctor`, `/dp-init`, `/dp-explain`, `/dp-propose`.",
     "Authority boundary: all reviewers & `structure-analyzer` are read-only; never create branches, commit, push, open/merge PRs, modify issues, or touch tags/releases implicitly.",
   );
 
@@ -224,8 +226,8 @@ const buildCompactDigest = ({ modeHeader, localConventions, hasCompanion }) => {
   }
 
   lines.push(
-    "MUST: AI-01/03/05, TS-02, SOC-01/04/06, DQ-02/04, SEC-01/02, TEST-03. Conflicts: [Conflict] ID <-> project rule | cause | reason.",
-    "On-demand: SKILL.md + workflow-guide/clean-code/architecture-soc/security-and-reliability/review-checklist by task; reviewers/analyzer read-only.",
+    "Tracks: S(1-2 files)/M(feature)/L(arch). MUST: AI-01/03/05, TS-02, SOC-01/04/06, DQ-02/04, SEC-01/02, TEST-03. Conflicts: [Conflict] ID <-> project rule | cause | reason.",
+    "On-demand: SKILL.md + workflow-guide/clean-code/architecture-soc/security-and-reliability/review-checklist; commands: /dp-design,/dp-refactor,/dp-review,/dp-check; reviewers read-only.",
   );
 
   return lines.join("\n");
