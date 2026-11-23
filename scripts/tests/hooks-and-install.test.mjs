@@ -97,13 +97,18 @@ test("buildSessionStartPayload standalone mode emits Progressive Disclosure dige
     const claudeCtx = claudePayload.hookSpecificOutput.additionalContext;
     assert.match(claudeCtx, /zero-config project detected/);
     assert.doesNotMatch(claudeCtx, /^---/m);
+    assert.match(claudeCtx, /Purpose:/);
+    assert.match(claudeCtx, /Tracks: Track S/);
+    assert.match(claudeCtx, /Priority: 1\. Security invariants/);
     assert.match(claudeCtx, /Local conventions detected: AGENTS\.md/);
     assert.match(claudeCtx, /Design\/Implement:/);
     assert.match(claudeCtx, /Refactor:/);
     assert.match(claudeCtx, /General review:/);
     assert.match(claudeCtx, /Architecture review:/);
     assert.match(claudeCtx, /Security review:/);
+    assert.match(claudeCtx, /Commands: `\/dp-design`, `\/dp-refactor`, `\/dp-review`/);
     assert.match(claudeCtx, /Authority boundary:/);
+    assert.doesNotMatch(claudeCtx, /## 1\. 강도와 우선순위/);
     assert.ok(Buffer.byteLength(claudeCtx, "utf8") < FULL_SKILL_BYTES);
 
     const cursorPayload = buildSessionStartPayload({
@@ -514,16 +519,130 @@ test(
           targetDir,
           "--copy",
         ]);
-        assert.match(juncInstallErr, /not owned by dev-principles|unmanaged directory/);
+        assert.match(juncInstallErr, /not owned by dev-principles|unmanaged or modified directory/);
         const juncUninstallErr = runExpectFailure(POSIX_SHELL, [
           path.join(REPO_ROOT, "uninstall.sh"),
           "--target",
           targetDir,
         ]);
-        assert.match(juncUninstallErr, /not owned by dev-principles|unmanaged path/);
+        assert.match(juncUninstallErr, /not owned by dev-principles|unmanaged or modified directory/);
         assert.equal(fs.existsSync(dest), true);
         fs.rmSync(dest, { recursive: true, force: true });
       }
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "P1 regression: ownership metadata tamper protection, extra user file preservation, source_path validation, and path traversal defense",
+  { skip: !POSIX_SHELL },
+  () => {
+    const tempDir = makeTempDir();
+    const targetDir = path.join(tempDir, ".agents", "skills");
+    const dest = path.join(targetDir, "dev-principles");
+    const markerPath = path.join(dest, ".dev-principles-script-managed");
+    const canonicalSource = fs.realpathSync.native(path.join(REPO_ROOT, "skills", "dev-principles"));
+
+    try {
+      // Path traversal in --target is rejected before touching filesystem
+      const traversalErr = runExpectFailure(POSIX_SHELL, [
+        path.join(REPO_ROOT, "install.sh"),
+        "--target",
+        `${targetDir}/../escape`,
+        "--copy",
+      ]);
+      assert.match(traversalErr, /Refusing unsafe target path/);
+      const uninstallTraversalErr = runExpectFailure(POSIX_SHELL, [
+        path.join(REPO_ROOT, "uninstall.sh"),
+        "--target",
+        `${targetDir}/../escape`,
+      ]);
+      assert.match(uninstallTraversalErr, /Refusing unsafe target path/);
+
+      // Install valid copy baseline
+      execFileSync(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"], {
+        encoding: "utf8",
+      });
+      const validMarker = fs.readFileSync(markerPath, "utf8");
+      assert.match(validMarker, /^schema_version=2$/m);
+      assert.match(validMarker, /^file=SKILL\.md$/m);
+
+      // (6) Existing installation without ownership marker -> refused & preserved
+      fs.unlinkSync(markerPath);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"]);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir]);
+      assert.equal(fs.existsSync(path.join(dest, "SKILL.md")), true);
+
+      // (7a) Forged marker: wrong plugin identifier
+      fs.writeFileSync(
+        markerPath,
+        validMarker.replace("plugin=dev-principles", "plugin=other-plugin"),
+      );
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"]);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir]);
+      assert.equal(fs.existsSync(path.join(dest, "SKILL.md")), true);
+
+      // (7b) Forged marker: mismatched install_path
+      fs.writeFileSync(
+        markerPath,
+        validMarker.replace(/^install_path=.*$/m, `install_path=${path.join(tempDir, "elsewhere")}`),
+      );
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"]);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir]);
+
+      // (7c) Forged marker: unsafe relative path in manifest (file=../secret.txt)
+      fs.writeFileSync(markerPath, `${validMarker}\nfile=../secret.txt\n`);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"]);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir]);
+
+      // (8) Invalid or mismatched source_path in marker
+      fs.writeFileSync(
+        markerPath,
+        validMarker.replace(/^source_path=.*$/m, "source_path=relative/source/path"),
+      );
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"]);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir]);
+
+      fs.writeFileSync(
+        markerPath,
+        validMarker.replace(/^source_path=.*$/m, `source_path=${canonicalSource}/../other`),
+      );
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"]);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir]);
+
+      fs.writeFileSync(
+        markerPath,
+        validMarker.replace(/^source_path=.*$/m, `source_path=${path.join(tempDir, "foreign-repo", "skills", "dev-principles")}`),
+      );
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"]);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir]);
+
+      // Restore valid marker, then add an untracked user file inside the directory:
+      // Marker presence alone MUST NOT grant ownership of the whole directory!
+      fs.writeFileSync(markerPath, validMarker);
+      const userCustomFile = path.join(dest, "user-custom-note.md");
+      fs.writeFileSync(userCustomFile, "# My personal note\n");
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "install.sh"), "--target", targetDir, "--copy"]);
+      runExpectFailure(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir]);
+      assert.equal(fs.readFileSync(userCustomFile, "utf8"), "# My personal note\n");
+      assert.equal(fs.existsSync(path.join(dest, "SKILL.md")), true);
+
+      // Remove user file -> directory is once again pure managed copy -> dry-run and uninstall succeed
+      fs.unlinkSync(userCustomFile);
+      const dryOut = execFileSync(
+        POSIX_SHELL,
+        [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir, "--dry-run"],
+        { encoding: "utf8" },
+      );
+      assert.match(dryOut, /\[dry-run\] Would remove owned copy directory/);
+      assert.equal(fs.existsSync(path.join(dest, "SKILL.md")), true);
+
+      execFileSync(POSIX_SHELL, [path.join(REPO_ROOT, "uninstall.sh"), "--target", targetDir], {
+        encoding: "utf8",
+      });
+      assert.equal(fs.existsSync(dest), false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
