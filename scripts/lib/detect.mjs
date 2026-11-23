@@ -49,8 +49,27 @@ const readPackageJson = (projectRoot) => {
   }
 };
 
+export const resolveProjectRoot = (startDir = process.cwd()) => {
+  let current = path.resolve(startDir);
+  while (true) {
+    if (
+      fs.existsSync(path.join(current, ".dev-principles.yaml")) ||
+      fs.existsSync(path.join(current, "package.json")) ||
+      fs.existsSync(path.join(current, "tsconfig.json")) ||
+      fs.existsSync(path.join(current, ".git"))
+    ) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return path.resolve(startDir);
+    }
+    current = parent;
+  }
+};
+
 export const detectProject = (cwd = process.cwd()) => {
-  const root = path.resolve(cwd);
+  const root = resolveProjectRoot(cwd);
   const pkg = readPackageJson(root);
   const deps = {
     ...(pkg?.dependencies ?? {}),

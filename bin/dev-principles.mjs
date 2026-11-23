@@ -131,14 +131,14 @@ const runInit = (flags) => {
 
 const runDoctor = (flags, rules) => {
   const cwd = path.resolve(flags.cwd ?? process.cwd());
-  const loaded = loadMergedConfig({ cwd });
+  const detected = detectProject(cwd);
+  const loaded = loadMergedConfig({ cwd: detected.root });
   const knownIds = new Set(rules.map((r) => r.id));
   const validation = validateConfig(loaded.config, knownIds);
-  const customWarnings = checkCustomPrinciplePaths(cwd, loaded.config);
+  const customWarnings = checkCustomPrinciplePaths(detected.root, loaded.config);
   const errors = [...loaded.parseErrors, ...validation.errors];
   const warnings = [...validation.warnings, ...customWarnings];
-  const detected = detectProject(cwd);
-  const conflicts = detectProjectConflicts({ cwd, config: loaded.config, detected });
+  const conflicts = detectProjectConflicts({ cwd: detected.root, config: loaded.config, detected });
   const { companions: companionPlugins } = detectCompanionPlugins({
     cwd,
     projectRoot: detected.root,
@@ -265,10 +265,18 @@ const runExplain = (ruleIdRaw, flags, rules) => {
   return 0;
 };
 
+const writeOutputIfRequested = (outFlag, text) => {
+  if (!outFlag) return;
+  const outPath = path.resolve(outFlag);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, text, "utf8");
+};
+
 const runCheck = (targetArg, flags, rules) => {
   const cwd = path.resolve(flags.cwd ?? process.cwd());
-  const { config } = loadMergedConfig({ cwd });
   const detected = detectProject(cwd);
+  const projectRoot = detected.root;
+  const { config } = loadMergedConfig({ cwd: projectRoot });
   const effectivePreset =
     flags.preset ??
     (config.architecture?.preset && config.architecture.preset !== "auto"
@@ -281,18 +289,64 @@ const runCheck = (targetArg, flags, rules) => {
     throw new Error(`Invalid --format "${flags.format}". Expected: review-result`);
   }
 
-  const ruleFilter = flags.rule ? flags.rule.toUpperCase() : null;
+  let ruleFilter = null;
+  if (flags.rule) {
+    ruleFilter = flags.rule.toUpperCase();
+    const knownRuleIds = new Set(rules.map((r) => r.id));
+    if (!knownRuleIds.has(ruleFilter)) {
+      throw new Error(`Unknown --rule "${ruleFilter}". Run "dev-principles list" to see available Rule IDs.`);
+    }
+  }
+
+  let externalContext = null;
+  let targetOverride = null;
+  let prIncludeFiles = null;
+  if (flags["pr-context"]) {
+    const prPath = path.resolve(flags["pr-context"]);
+    if (fs.existsSync(prPath)) {
+      try {
+        const prJson = JSON.parse(fs.readFileSync(prPath, "utf8"));
+        externalContext = {
+          source: prJson.source ?? "github-convention",
+          prNumber: prJson.prNumber ?? null,
+          baseRef: prJson.baseRef ?? null,
+        };
+        const prPaths = Array.isArray(prJson.paths)
+          ? prJson.paths.filter((p) => typeof p === "string" && p.trim().length > 0)
+          : [];
+        targetOverride = {
+          commit: prJson.commit ?? null,
+          diff: prJson.diff ?? null,
+          paths: prPaths,
+        };
+        if (prPaths.length > 0) {
+          prIncludeFiles = new Set(prPaths.map((p) => p.replace(/\\/g, "/").replace(/^\.\//, "")));
+        }
+      } catch {
+        // Ignore malformed external PR context; standalone check still succeeds.
+      }
+    }
+  }
+
+  const resolvedTargetArg = targetArg
+    ? path.relative(projectRoot, path.resolve(cwd, targetArg)) || "."
+    : cwd !== projectRoot
+      ? path.relative(projectRoot, cwd) || "."
+      : null;
+
   const includeFiles =
     flags.staged || flags.changed
-      ? collectGitTargetFiles(cwd, {
+      ? collectGitTargetFiles(projectRoot, {
           staged: Boolean(flags.staged),
           changed: Boolean(flags.changed),
         })
-      : null;
+      : !targetArg && prIncludeFiles
+        ? prIncludeFiles
+        : null;
 
   const result = runStaticChecks({
-    cwd,
-    targetPath: targetArg ?? null,
+    cwd: projectRoot,
+    targetPath: resolvedTargetArg,
     preset: effectivePreset,
     ruleFilter,
     includeFiles,
@@ -305,30 +359,7 @@ const runCheck = (targetArg, flags, rules) => {
     : result.summary.must > 0;
 
   if (flags.format === "review-result") {
-    let externalContext = null;
-    let targetOverride = null;
-    if (flags["pr-context"]) {
-      const prPath = path.resolve(flags["pr-context"]);
-      if (fs.existsSync(prPath)) {
-        try {
-          const prJson = JSON.parse(fs.readFileSync(prPath, "utf8"));
-          externalContext = {
-            source: prJson.source ?? "github-convention",
-            prNumber: prJson.prNumber ?? null,
-            baseRef: prJson.baseRef ?? null,
-          };
-          targetOverride = {
-            commit: prJson.commit ?? null,
-            diff: prJson.diff ?? null,
-            paths: Array.isArray(prJson.paths) ? prJson.paths : [],
-          };
-        } catch {
-          // Ignore malformed external PR context; standalone check still succeeds.
-        }
-      }
-    }
-
-    const conflicts = detectProjectConflicts({ cwd, config, detected });
+    const conflicts = detectProjectConflicts({ cwd: projectRoot, config, detected });
     const reviewPayload = buildReviewResult({
       reviewerId: "dev-principles-static-check",
       scope: flags.staged ? "staged" : flags.changed ? "changed" : targetArg ?? "repository",
@@ -349,38 +380,33 @@ const runCheck = (targetArg, flags, rules) => {
       externalContext,
     });
     const serialized = `${JSON.stringify(reviewPayload, null, 2)}\n`;
-    if (flags.out) {
-      const outPath = path.resolve(flags.out);
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, serialized, "utf8");
-    }
+    writeOutputIfRequested(flags.out, serialized);
     process.stdout.write(serialized);
     return failed ? 1 : 0;
   }
 
   if (flags.json) {
     const serialized = `${JSON.stringify({ ...result, ok: !failed }, null, 2)}\n`;
-    if (flags.out) {
-      const outPath = path.resolve(flags.out);
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, serialized, "utf8");
-    }
+    writeOutputIfRequested(flags.out, serialized);
     process.stdout.write(serialized);
     return failed ? 1 : 0;
   }
 
-  process.stdout.write(
-    `dev-principles check (${cwd}) — preset: ${result.preset}, files: ${result.scannedFiles}\n`,
-  );
+  const textLines = [
+    `dev-principles check (${projectRoot}) — preset: ${result.preset}, files: ${result.scannedFiles}`,
+  ];
   for (const f of result.findings) {
-    process.stdout.write(
-      `[${f.severity.toUpperCase()}] [${f.ruleId}] ${f.file}:${f.line} — ${f.message}\n`,
+    textLines.push(
+      `[${f.severity.toUpperCase()}] [${f.ruleId}] ${f.file}:${f.line} — ${f.message}`,
+      `  Suggestion: ${f.suggestion}`,
     );
-    process.stdout.write(`  Suggestion: ${f.suggestion}\n`);
   }
-  process.stdout.write(
-    `Summary: ${result.summary.total} findings (MUST: ${result.summary.must}, SHOULD: ${result.summary.should}, PREFER: ${result.summary.prefer})\n`,
+  textLines.push(
+    `Summary: ${result.summary.total} findings (MUST: ${result.summary.must}, SHOULD: ${result.summary.should}, PREFER: ${result.summary.prefer})`,
   );
+  const textOut = `${textLines.join("\n")}\n`;
+  writeOutputIfRequested(flags.out, textOut);
+  process.stdout.write(textOut);
   return failed ? 1 : 0;
 };
 

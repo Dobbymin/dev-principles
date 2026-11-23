@@ -46,6 +46,32 @@ const stripInlineComment = (raw) => {
   return raw.trim();
 };
 
+const splitInlineArray = (inner) => {
+  const items = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < inner.length; i += 1) {
+    const ch = inner[i];
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+    } else if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+    } else if (ch === "," && !inSingle && !inDouble) {
+      items.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim().length > 0) {
+    items.push(current.trim());
+  }
+  return items;
+};
+
 const parseScalar = (raw) => {
   const val = stripInlineComment(raw);
   if (val === "[]") return [];
@@ -53,7 +79,7 @@ const parseScalar = (raw) => {
   if (val.startsWith("[") && val.endsWith("]")) {
     const inner = val.slice(1, -1).trim();
     if (!inner) return [];
-    return inner.split(",").map((part) => parseScalar(part.trim()));
+    return splitInlineArray(inner).map((part) => parseScalar(part));
   }
   if (val === "true") return true;
   if (val === "false") return false;
@@ -145,9 +171,32 @@ export const getGlobalConfigPath = (env = process.env) => {
   return path.join(base, "dev-principles", "config.yaml");
 };
 
+export const findNearestConfigPath = (startDir) => {
+  let current = path.resolve(startDir);
+  while (true) {
+    const candidate = path.join(current, ".dev-principles.yaml");
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    if (
+      fs.existsSync(path.join(current, "package.json")) ||
+      fs.existsSync(path.join(current, "tsconfig.json")) ||
+      fs.existsSync(path.join(current, ".git"))
+    ) {
+      return candidate;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return path.join(path.resolve(startDir), ".dev-principles.yaml");
+    }
+    current = parent;
+  }
+};
+
 export const loadMergedConfig = ({ cwd = process.cwd(), env = process.env, globalPath } = {}) => {
   const resolvedGlobal = globalPath ?? getGlobalConfigPath(env);
-  const projectPath = path.join(path.resolve(cwd), ".dev-principles.yaml");
+  const directPath = path.join(path.resolve(cwd), ".dev-principles.yaml");
+  const projectPath = fs.existsSync(directPath) ? directPath : findNearestConfigPath(cwd);
 
   let globalConfig = null;
   let projectConfig = null;
@@ -280,6 +329,10 @@ export const validateConfig = (config, knownRuleIds) => {
         if (SECURITY_INVARIANTS.has(ruleId) && severity === "off") {
           warnings.push(
             `Security invariant "${ruleId}" cannot be disabled via "off"; core security rule remains active.`,
+          );
+        } else if (SECURITY_INVARIANTS.has(ruleId) && severity !== "must") {
+          warnings.push(
+            `Security invariant "${ruleId}" cannot be downgraded to "${severity}"; severity remains "must".`,
           );
         }
       }
