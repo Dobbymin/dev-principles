@@ -80,8 +80,8 @@ ownership_cleanup() {
 remove_staging_dir() {
   _rsd_dir="$1"
   [ -n "$_rsd_dir" ] && [ -d "$_rsd_dir" ] && [ ! -L "$_rsd_dir" ] || return 0
-  find "$_rsd_dir" -mindepth 1 ! -type d -exec rm -f -- {} + 2>/dev/null || true
-  find "$_rsd_dir" -depth -mindepth 1 -type d -exec rmdir -- {} + 2>/dev/null || true
+  find "$_rsd_dir" ! -path "$_rsd_dir" ! -type d -exec rm -f -- {} + 2>/dev/null || true
+  find "$_rsd_dir" -depth ! -path "$_rsd_dir" -type d -exec rmdir -- {} + 2>/dev/null || true
   rmdir -- "$_rsd_dir" 2>/dev/null || true
 }
 

@@ -7,7 +7,7 @@ import { detectCompanionPlugins } from "../hooks/session-start.mjs";
 import { collectGitTargetFiles, runStaticChecks } from "../scripts/lib/checker.mjs";
 import { checkCustomPrinciplePaths, loadMergedConfig, validateConfig } from "../scripts/lib/config.mjs";
 import { detectProject, detectProjectConflicts } from "../scripts/lib/detect.mjs";
-import { buildReviewResult, getOwnerReviewerForRule } from "../scripts/lib/review-contract.mjs";
+import { buildReviewResult, getOwnerReviewerForRule, parsePrContext } from "../scripts/lib/review-contract.mjs";
 import { loadRules, resolveEffectiveRules } from "../scripts/lib/rules.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -272,6 +272,20 @@ const writeOutputIfRequested = (outFlag, text) => {
   fs.writeFileSync(outPath, text, "utf8");
 };
 
+const loadPrContextFile = (rawPath) => {
+  if (typeof rawPath !== "string" || rawPath.trim().length === 0) {
+    throw new Error("Invalid --pr-context: file path must be a non-empty string.");
+  }
+  const prPath = path.resolve(rawPath);
+  if (!fs.existsSync(prPath)) {
+    throw new Error(`PR context file not found: ${prPath}`);
+  }
+  if (!fs.statSync(prPath).isFile()) {
+    throw new Error(`PR context path is not a file: ${prPath}`);
+  }
+  return parsePrContext(fs.readFileSync(prPath, "utf8"), prPath);
+};
+
 const runCheck = (targetArg, flags, rules) => {
   const cwd = path.resolve(flags.cwd ?? process.cwd());
   const detected = detectProject(cwd);
@@ -301,31 +315,11 @@ const runCheck = (targetArg, flags, rules) => {
   let externalContext = null;
   let targetOverride = null;
   let prIncludeFiles = null;
-  if (flags["pr-context"]) {
-    const prPath = path.resolve(flags["pr-context"]);
-    if (fs.existsSync(prPath)) {
-      try {
-        const prJson = JSON.parse(fs.readFileSync(prPath, "utf8"));
-        externalContext = {
-          source: prJson.source ?? "github-convention",
-          prNumber: prJson.prNumber ?? null,
-          baseRef: prJson.baseRef ?? null,
-        };
-        const prPaths = Array.isArray(prJson.paths)
-          ? prJson.paths.filter((p) => typeof p === "string" && p.trim().length > 0)
-          : [];
-        targetOverride = {
-          commit: prJson.commit ?? null,
-          diff: prJson.diff ?? null,
-          paths: prPaths,
-        };
-        if (prPaths.length > 0) {
-          prIncludeFiles = new Set(prPaths.map((p) => p.replace(/\\/g, "/").replace(/^\.\//, "")));
-        }
-      } catch {
-        // Ignore malformed external PR context; standalone check still succeeds.
-      }
-    }
+  if (Object.hasOwn(flags, "pr-context")) {
+    const parsedPr = loadPrContextFile(flags["pr-context"]);
+    externalContext = parsedPr.externalContext;
+    targetOverride = parsedPr.targetOverride;
+    prIncludeFiles = parsedPr.includeFiles;
   }
 
   const resolvedTargetArg = targetArg
@@ -340,7 +334,7 @@ const runCheck = (targetArg, flags, rules) => {
           staged: Boolean(flags.staged),
           changed: Boolean(flags.changed),
         })
-      : !targetArg && prIncludeFiles
+      : !targetArg && prIncludeFiles !== null
         ? prIncludeFiles
         : null;
 

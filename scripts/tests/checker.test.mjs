@@ -406,3 +406,150 @@ test("checker parses multiline imports, validates --rule IDs, supports text --ou
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("PR changed-files scope distinguishes 0/1/N files and rejects invalid --pr-context without falling back to full scan", () => {
+  const dir = makeTempDir();
+  try {
+    writeFixtureFile(dir, "src/clean.ts", `export const ok = 1;\n`);
+    writeFixtureFile(dir, "src/bad1.ts", `export const b1: any = 1;\n`);
+    writeFixtureFile(dir, "src/bad2.ts", `export const b2: any = 2;\n`);
+
+    const runCheckExpectFail = (args) => {
+      let failed = false;
+      let stdout = "";
+      let stderr = "";
+      try {
+        execFileSync(process.execPath, [BIN_PATH, "check", "--cwd", dir, ...args], {
+          encoding: "utf8",
+          stdio: "pipe",
+        });
+      } catch (err) {
+        failed = true;
+        stdout = String(err.stdout ?? "");
+        stderr = String(err.stderr ?? "");
+      }
+      assert.equal(failed, true, `Expected check to fail for args: ${args.join(" ")}`);
+      return { stdout, stderr };
+    };
+
+    // 1. PR changed files = 0 (paths: []) -> MUST NOT scan src/bad1.ts or src/bad2.ts
+    const emptyPrPath = path.join(dir, "pr-empty.json");
+    writeFixtureFile(
+      dir,
+      "pr-empty.json",
+      JSON.stringify({ source: "github-convention", prNumber: 10, baseRef: "main", paths: [] }),
+    );
+    const emptyJson = JSON.parse(
+      execFileSync(process.execPath, [BIN_PATH, "check", "--cwd", dir, "--pr-context", emptyPrPath, "--json"], {
+        encoding: "utf8",
+      }),
+    );
+    assert.equal(emptyJson.ok, true);
+    assert.equal(emptyJson.scannedFiles, 0);
+    assert.deepEqual(emptyJson.findings, []);
+
+    const emptyReview = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [BIN_PATH, "check", "--cwd", dir, "--format", "review-result", "--pr-context", emptyPrPath],
+        { encoding: "utf8" },
+      ),
+    );
+    assert.equal(emptyReview.status, "completed");
+    assert.deepEqual(emptyReview.findings, []);
+    assert.deepEqual(emptyReview.target.paths, []);
+
+    const emptyText = execFileSync(
+      process.execPath,
+      [BIN_PATH, "check", "--cwd", dir, "--pr-context", emptyPrPath],
+      { encoding: "utf8" },
+    );
+    assert.match(emptyText, /files: 0/);
+    assert.match(emptyText, /Summary: 0 findings/);
+
+    // 2. PR changed files = 1 (clean file -> 0 findings; bad1 -> only bad1)
+    const oneCleanPath = path.join(dir, "pr-one-clean.json");
+    writeFixtureFile(dir, "pr-one-clean.json", JSON.stringify({ paths: ["src/clean.ts"] }));
+    const oneClean = JSON.parse(
+      execFileSync(process.execPath, [BIN_PATH, "check", "--cwd", dir, "--pr-context", oneCleanPath, "--json"], {
+        encoding: "utf8",
+      }),
+    );
+    assert.equal(oneClean.ok, true);
+    assert.equal(oneClean.scannedFiles, 1);
+    assert.equal(oneClean.findings.length, 0);
+
+    const oneBadPath = path.join(dir, "pr-one-bad.json");
+    writeFixtureFile(dir, "pr-one-bad.json", JSON.stringify({ paths: ["src/bad1.ts"] }));
+    const oneBadRes = runCheckExpectFail(["--pr-context", oneBadPath, "--json"]);
+    const oneBad = JSON.parse(oneBadRes.stdout);
+    assert.equal(oneBad.scannedFiles, 1);
+    assert.deepEqual(
+      oneBad.findings.map((f) => f.file),
+      ["src/bad1.ts"],
+    );
+
+    // 3. PR changed files = multiple (clean + bad1 -> excludes bad2)
+    const multiPath = path.join(dir, "pr-multi.json");
+    writeFixtureFile(dir, "pr-multi.json", JSON.stringify({ paths: ["src/clean.ts", "src/bad1.ts"] }));
+    const multiRes = runCheckExpectFail(["--pr-context", multiPath, "--json"]);
+    const multi = JSON.parse(multiRes.stdout);
+    assert.equal(multi.scannedFiles, 2);
+    assert.deepEqual(
+      multi.findings.map((f) => f.file),
+      ["src/bad1.ts"],
+    );
+
+    // 4. Normal full project check (no --pr-context, no target) -> scans all 3 files
+    const fullRes = runCheckExpectFail(["--json"]);
+    const full = JSON.parse(fullRes.stdout);
+    assert.equal(full.scannedFiles, 3);
+    assert.deepEqual(
+      full.findings.map((f) => f.file).sort(),
+      ["src/bad1.ts", "src/bad2.ts"],
+    );
+
+    // 5. Explicit target file -> scans only that file
+    const explicitRes = runCheckExpectFail(["src/bad1.ts", "--json"]);
+    const explicit = JSON.parse(explicitRes.stdout);
+    assert.equal(explicit.scannedFiles, 1);
+    assert.deepEqual(
+      explicit.findings.map((f) => f.file),
+      ["src/bad1.ts"],
+    );
+
+    // 6. PR context error cases: missing file, parse error, missing required field, invalid formats
+    const missingCtx = runCheckExpectFail(["--pr-context", path.join(dir, "does-not-exist.json"), "--json"]);
+    assert.equal(missingCtx.stdout, "");
+    assert.match(missingCtx.stderr, /PR context file not found/);
+
+    const emptyFlagCtx = runCheckExpectFail(["--pr-context", "", "--json"]);
+    assert.equal(emptyFlagCtx.stdout, "");
+    assert.match(emptyFlagCtx.stderr, /Invalid --pr-context/);
+
+    const badJsonPath = path.join(dir, "bad.json");
+    writeFixtureFile(dir, "bad.json", "{not-json");
+    const badJsonCtx = runCheckExpectFail(["--pr-context", badJsonPath, "--json"]);
+    assert.equal(badJsonCtx.stdout, "");
+    assert.match(badJsonCtx.stderr, /Failed to parse PR context JSON/);
+
+    const invalidCases = [
+      ["missing-paths.json", JSON.stringify({ source: "github-convention" }), /missing required field "paths"/],
+      ["root-array.json", JSON.stringify(["src/clean.ts"]), /expected a JSON object/],
+      ["paths-string.json", JSON.stringify({ paths: "src/clean.ts" }), /must be an array/],
+      ["paths-nonstring.json", JSON.stringify({ paths: [123] }), /invalid path entry/],
+      ["paths-empty-entry.json", JSON.stringify({ paths: [""] }), /invalid path entry/],
+      ["paths-traversal.json", JSON.stringify({ paths: ["../escape.ts"] }), /invalid path entry/],
+      ["bad-pr-number.json", JSON.stringify({ paths: [], prNumber: "42" }), /field "prNumber" has invalid type/],
+    ];
+    for (const [fileName, content, pattern] of invalidCases) {
+      const p = path.join(dir, fileName);
+      writeFixtureFile(dir, fileName, content);
+      const errRes = runCheckExpectFail(["--pr-context", p, "--json"]);
+      assert.equal(errRes.stdout, "");
+      assert.match(errRes.stderr, pattern);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

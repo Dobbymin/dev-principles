@@ -137,6 +137,10 @@ test(
 
       const sampleFiles = [
         "SKILL.md",
+        "normal.txt",
+        "file name.txt",
+        "name_with_n.txt",
+        "nested/deep/inner.txt",
         "sub dir/my skill.md",
         "nested/clean-notes.md",
         "a/b/c/d/deep.md",
@@ -161,11 +165,15 @@ test(
       const realDest = fs.realpathSync.native(destDir);
 
       // write_copy_marker + verify_owned_dest + remove_owned_dest succeed with special filenames
+      // and preserve caller IFS
       runOwnershipHelper(
         POSIX_SHELL,
         `
+        _before_ifs="$IFS"
         write_copy_marker "$1" "dev-principles" "$2" "$3"
+        [ "$IFS" = "$_before_ifs" ]
         verify_owned_dest "$1" "dev-principles" "$3" verify "$2"
+        [ "$IFS" = "$_before_ifs" ]
         `,
         [destDir, realDest, realSrc],
       );
@@ -180,10 +188,14 @@ test(
         [destDir, realDest, realSrc],
       );
 
-      // remove_owned_dest removes all special-character files and nested dirs cleanly
+      // remove_owned_dest removes all special-character files and nested dirs cleanly and preserves IFS
       runOwnershipHelper(
         POSIX_SHELL,
-        `remove_owned_dest "$1" "dev-principles" "$3" "$2"`,
+        `
+        _before_ifs="$IFS"
+        remove_owned_dest "$1" "dev-principles" "$3" "$2"
+        [ "$IFS" = "$_before_ifs" ]
+        `,
         [destDir, realDest, realSrc],
       );
       assert.equal(fs.existsSync(destDir), false);
@@ -203,10 +215,39 @@ test(
         "/abs/path",
         "C:/abs/path",
         "a\\b",
+        "back\\slash.txt",
         "..\\secret",
         "a//b",
         "a/",
       ];
+
+      // On POSIX filesystems, a real file named back\slash.txt on disk is explicitly rejected without
+      // splitting or unescaping '\' and without deleting existing files, while preserving IFS
+      if (process.platform !== "win32") {
+        fs.writeFileSync(
+          markerPath,
+          buildMarker({ installPath: realDest, sourcePath: realSrc, files: sampleFiles }),
+        );
+        const backslashFile = path.join(destDir, "back\\slash.txt");
+        fs.writeFileSync(backslashFile, "keep-backslash\n");
+        const bsErr = runOwnershipHelper(
+          POSIX_SHELL,
+          `
+          _before_ifs="$IFS"
+          set +e
+          verify_owned_dest "$1" "dev-principles" "$3" verify "$2"
+          _rc=$?
+          set -e
+          [ "$IFS" = "$_before_ifs" ] || { echo "IFS mutated" >&2; exit 2; }
+          exit "$_rc"
+          `,
+          [destDir, realDest, realSrc],
+          true,
+        );
+        assert.match(bsErr, /unsafe relative path: back\\slash\.txt/);
+        assert.equal(fs.readFileSync(backslashFile, "utf8"), "keep-backslash\n");
+        fs.unlinkSync(backslashFile);
+      }
 
       for (const badRel of invalidRelPaths) {
         const marker = buildMarker({
@@ -610,6 +651,36 @@ test(
         execFileSync("/bin/dash", [UNINSTALL_SH, "--target", targetDir], { encoding: "utf8" });
         assert.equal(fs.existsSync(dest), false);
       }
+
+      // Foreign plugin marker alongside valid marker is rejected, and sibling plugin files/markers stay untouched
+      const siblingSkill = path.join(targetDir, "using-github-convention");
+      fs.mkdirSync(siblingSkill, { recursive: true });
+      fs.writeFileSync(path.join(siblingSkill, "SKILL.md"), "# using-github-convention\n");
+      fs.writeFileSync(
+        path.join(siblingSkill, ".github-convention-script-managed"),
+        "plugin=github-convention\nmanaged_by=install.sh\n",
+      );
+
+      execFileSync(POSIX_SHELL, [INSTALL_SH, "--target", targetDir, "--copy"], { encoding: "utf8" });
+      // Update while sibling exists
+      execFileSync(POSIX_SHELL, [INSTALL_SH, "--target", targetDir, "--copy"], { encoding: "utf8" });
+      // Add foreign marker alongside valid dev-principles marker -> both install and uninstall must refuse
+      const foreignAlongside = path.join(dest, ".github-convention-script-managed");
+      fs.writeFileSync(foreignAlongside, "plugin=github-convention\n");
+      const foreignErr = runExpectFailure(POSIX_SHELL, [UNINSTALL_SH, "--target", targetDir]);
+      assert.match(foreignErr, /foreign plugin marker detected/);
+      runExpectFailure(POSIX_SHELL, [INSTALL_SH, "--target", targetDir, "--copy"]);
+      assert.equal(fs.existsSync(foreignAlongside), true);
+      fs.unlinkSync(foreignAlongside);
+
+      // Uninstall dev-principles -> sibling github-convention files and marker remain untouched
+      execFileSync(POSIX_SHELL, [UNINSTALL_SH, "--target", targetDir], { encoding: "utf8" });
+      assert.equal(fs.existsSync(dest), false);
+      assert.equal(fs.readFileSync(path.join(siblingSkill, "SKILL.md"), "utf8"), "# using-github-convention\n");
+      assert.equal(
+        fs.readFileSync(path.join(siblingSkill, ".github-convention-script-managed"), "utf8"),
+        "plugin=github-convention\nmanaged_by=install.sh\n",
+      );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
