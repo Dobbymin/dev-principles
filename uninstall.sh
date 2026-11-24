@@ -55,6 +55,8 @@ validate_skill_name() {
 
 . "$CANONICAL_SCRIPT_DIR/scripts/lib/ownership.sh"
 
+trap ownership_cleanup EXIT INT TERM
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --scope)
@@ -129,7 +131,9 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
   validate_skill_name "$SKILL_NAME"
   DEST="$TARGET/$SKILL_NAME"
 
-  verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" remove || exit 1
+  if ! verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" remove; then
+    exit 1
+  fi
 done
 
 for SKILL_DIR in "$SKILLS_ROOT"/*; do
@@ -145,7 +149,9 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
   fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
-    verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" remove || exit 1
+    if ! verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" remove; then
+      exit 1
+    fi
     if [ -L "$DEST" ]; then
       echo "[dry-run] Would remove owned symlink: $DEST"
     else
@@ -154,9 +160,11 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
     continue
   fi
 
-  # remove_owned_dest re-verifies ownership immediately before deleting; failure aborts via set -e/exit.
+  # remove_owned_dest re-verifies ownership immediately before deleting; failure aborts via explicit check.
   _kind="directory"
   [ -L "$DEST" ] && _kind="symlink"
-  remove_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" || exit 1
+  if ! remove_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR"; then
+    exit 1
+  fi
   echo "Removed $_kind: $DEST"
 done
