@@ -164,3 +164,75 @@ export const mergeReviewResults = (results = [], { externalFindings = [] } = {})
     externalContext,
   });
 };
+
+export const parsePrContext = (rawText, sourceLabel = "pr-context") => {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (err) {
+    throw new Error(
+      `Failed to parse PR context JSON (${sourceLabel}): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Invalid PR context format (${sourceLabel}): expected a JSON object.`);
+  }
+
+  if (!Object.hasOwn(parsed, "paths") || parsed.paths === undefined) {
+    throw new Error(`Invalid PR context (${sourceLabel}): missing required field "paths".`);
+  }
+
+  if (!Array.isArray(parsed.paths)) {
+    throw new Error(`Invalid PR context (${sourceLabel}): field "paths" must be an array of file paths.`);
+  }
+
+  const normalizedPaths = [];
+  for (const entry of parsed.paths) {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      throw new Error(`Invalid PR context (${sourceLabel}): invalid path entry ${JSON.stringify(entry)}.`);
+    }
+    const norm = entry.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+    if (
+      !norm ||
+      norm === "." ||
+      norm.startsWith("/") ||
+      /^[A-Za-z]:\//.test(norm) ||
+      /(^|\/)\.\.(\/|$)/.test(norm)
+    ) {
+      throw new Error(`Invalid PR context (${sourceLabel}): invalid path entry "${entry}".`);
+    }
+    normalizedPaths.push(norm);
+  }
+
+  if (parsed.source !== undefined && parsed.source !== null) {
+    if (typeof parsed.source !== "string" || parsed.source.trim().length === 0) {
+      throw new Error(`Invalid PR context (${sourceLabel}): field "source" has invalid type.`);
+    }
+  }
+  if (parsed.prNumber !== undefined && parsed.prNumber !== null) {
+    if (typeof parsed.prNumber !== "number" || !Number.isInteger(parsed.prNumber) || parsed.prNumber <= 0) {
+      throw new Error(`Invalid PR context (${sourceLabel}): field "prNumber" has invalid type.`);
+    }
+  }
+  for (const strField of ["baseRef", "commit", "diff"]) {
+    const val = parsed[strField];
+    if (val !== undefined && val !== null && typeof val !== "string") {
+      throw new Error(`Invalid PR context (${sourceLabel}): field "${strField}" has invalid type.`);
+    }
+  }
+
+  return {
+    externalContext: {
+      source: parsed.source ?? "github-convention",
+      prNumber: parsed.prNumber ?? null,
+      baseRef: parsed.baseRef ?? null,
+    },
+    targetOverride: {
+      commit: parsed.commit ?? null,
+      diff: parsed.diff ?? null,
+      paths: normalizedPaths,
+    },
+    includeFiles: new Set(normalizedPaths),
+  };
+};

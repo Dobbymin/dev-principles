@@ -31,10 +31,18 @@ TARGET=""
 MODE="symlink"
 DRY_RUN=0
 STAGING_DIR=""
+BACKUP_DIR=""
+BACKUP_ORIGIN=""
 
 cleanup() {
-  if [ -n "$STAGING_DIR" ] && [ -e "$STAGING_DIR" ]; then
-    rm -rf "$STAGING_DIR"
+  ownership_cleanup
+  if [ -n "$BACKUP_DIR" ] && [ -n "$BACKUP_ORIGIN" ] && { [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; }; then
+    if [ ! -e "$BACKUP_ORIGIN" ] && [ ! -L "$BACKUP_ORIGIN" ]; then
+      mv -- "$BACKUP_DIR" "$BACKUP_ORIGIN" 2>/dev/null || true
+    fi
+  fi
+  if [ -n "$STAGING_DIR" ] && { [ -e "$STAGING_DIR" ] || [ -L "$STAGING_DIR" ]; }; then
+    remove_staging_dir "$STAGING_DIR"
   fi
 }
 
@@ -152,7 +160,9 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
   DEST="$TARGET/$SKILL_NAME"
   SKILL_COUNT=$((SKILL_COUNT + 1))
 
-  verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite || exit 1
+  if ! verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite; then
+    exit 1
+  fi
 done
 
 if [ "$SKILL_COUNT" -eq 0 ]; then
@@ -181,23 +191,68 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
 
   mkdir -p "$TARGET"
   CANONICAL_TARGET="$(resolve_dir "$TARGET")"
+  if [ -z "$CANONICAL_TARGET" ] || [ "$CANONICAL_TARGET" = "/" ]; then
+    echo "Refusing unsafe canonical target directory: $CANONICAL_TARGET" >&2
+    exit 1
+  fi
   CANONICAL_DEST="$CANONICAL_TARGET/$SKILL_NAME"
 
   if [ "$MODE" = "symlink" ]; then
-    verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite || exit 1
-    if [ -L "$DEST" ] || [ -d "$DEST" ]; then
-      remove_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" || exit 1
+    if ! verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite; then
+      exit 1
     fi
+    BACKUP_DIR=""
+    BACKUP_ORIGIN=""
+    if [ -L "$DEST" ] || [ -d "$DEST" ]; then
+      BACKUP_DIR="$TARGET/.${SKILL_NAME}.dev-principles.bak.$$"
+      if [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; then
+        echo "Backup path already exists: $BACKUP_DIR" >&2
+        BACKUP_DIR=""
+        exit 1
+      fi
+      BACKUP_ORIGIN="$DEST"
+      if ! mv -- "$DEST" "$BACKUP_DIR"; then
+        echo "Failed to stage existing installation for update: $DEST" >&2
+        BACKUP_DIR=""
+        BACKUP_ORIGIN=""
+        exit 1
+      fi
+    fi
+
     if is_windows_shell; then
       if ! MSYS="winsymlinks:nativestrict" ln -s "$CANONICAL_SKILL_DIR" "$DEST" 2>/dev/null || [ ! -L "$DEST" ]; then
         if [ -L "$DEST" ]; then
-          rm -- "$DEST"
+          rm -- "$DEST" 2>/dev/null || true
+        fi
+        if [ -n "$BACKUP_DIR" ] && { [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; }; then
+          mv -- "$BACKUP_DIR" "$DEST" 2>/dev/null || true
+          BACKUP_DIR=""
+          BACKUP_ORIGIN=""
         fi
         echo "Symlink creation failed on Windows; enable Developer Mode or pass --copy." >&2
         exit 1
       fi
     else
-      ln -s "$CANONICAL_SKILL_DIR" "$DEST"
+      if ! ln -s "$CANONICAL_SKILL_DIR" "$DEST"; then
+        if [ -n "$BACKUP_DIR" ] && { [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; }; then
+          mv -- "$BACKUP_DIR" "$DEST" 2>/dev/null || true
+          BACKUP_DIR=""
+          BACKUP_ORIGIN=""
+        fi
+        echo "Symlink creation failed: $DEST" >&2
+        exit 1
+      fi
+    fi
+
+    if [ -n "$BACKUP_DIR" ]; then
+      if ! remove_owned_dest "$BACKUP_DIR" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" "$CANONICAL_DEST"; then
+        echo "Updated symlink, but failed to clean backup at $BACKUP_DIR. Remove it manually after verifying $DEST." >&2
+        BACKUP_DIR=""
+        BACKUP_ORIGIN=""
+        exit 1
+      fi
+      BACKUP_DIR=""
+      BACKUP_ORIGIN=""
     fi
     echo "Installed symlink: $DEST -> $CANONICAL_SKILL_DIR"
   else
@@ -209,26 +264,56 @@ for SKILL_DIR in "$SKILLS_ROOT"/*; do
     fi
     mkdir -p "$STAGING_DIR"
     cp -R "$CANONICAL_SKILL_DIR"/. "$STAGING_DIR"/
-    MANIFEST="$(cd "$STAGING_DIR" && find . -type f | sed 's|^\./||' | LC_ALL=C sort)"
-    {
-      printf "schema_version=2\n"
-      printf "plugin=dev-principles\n"
-      printf "managed_by=install.sh\n"
-      printf "managed-by=install.sh\n"
-      printf "install_mode=copy\n"
-      printf "skill=%s\n" "$SKILL_NAME"
-      printf "install_path=%s\n" "$CANONICAL_DEST"
-      printf "source_path=%s\n" "$CANONICAL_SKILL_DIR"
-      printf "link_target=\n"
-      printf '%s\n' "$MANIFEST" | sed 's/^/file=/'
-    } > "$STAGING_DIR/$MARKER_FILE"
-
-    verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite || exit 1
-    if [ -L "$DEST" ] || [ -d "$DEST" ]; then
-      remove_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" || exit 1
+    if ! write_copy_marker "$STAGING_DIR" "$SKILL_NAME" "$CANONICAL_DEST" "$CANONICAL_SKILL_DIR"; then
+      exit 1
     fi
-    mv "$STAGING_DIR" "$DEST"
+
+    if ! verify_owned_dest "$DEST" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" overwrite; then
+      exit 1
+    fi
+
+    BACKUP_DIR=""
+    BACKUP_ORIGIN=""
+    if [ -L "$DEST" ] || [ -d "$DEST" ]; then
+      BACKUP_DIR="$TARGET/.${SKILL_NAME}.dev-principles.bak.$$"
+      if [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; then
+        echo "Backup path already exists: $BACKUP_DIR" >&2
+        BACKUP_DIR=""
+        exit 1
+      fi
+      BACKUP_ORIGIN="$DEST"
+      if ! mv -- "$DEST" "$BACKUP_DIR"; then
+        echo "Failed to stage existing installation for update: $DEST" >&2
+        BACKUP_DIR=""
+        BACKUP_ORIGIN=""
+        exit 1
+      fi
+    fi
+
+    if ! mv -- "$STAGING_DIR" "$DEST"; then
+      if [ -n "$BACKUP_DIR" ] && { [ -e "$BACKUP_DIR" ] || [ -L "$BACKUP_DIR" ]; }; then
+        if mv -- "$BACKUP_DIR" "$DEST" 2>/dev/null; then
+          echo "Update failed; restored previous installation at $DEST" >&2
+        else
+          echo "Update failed and automatic restore failed. Recover manually from $BACKUP_DIR to $DEST" >&2
+        fi
+        BACKUP_DIR=""
+        BACKUP_ORIGIN=""
+      fi
+      exit 1
+    fi
     STAGING_DIR=""
+
+    if [ -n "$BACKUP_DIR" ]; then
+      if ! remove_owned_dest "$BACKUP_DIR" "$SKILL_NAME" "$CANONICAL_SKILL_DIR" "$CANONICAL_DEST"; then
+        echo "Updated installation at $DEST, but failed to clean backup at $BACKUP_DIR. Remove it manually after verifying $DEST." >&2
+        BACKUP_DIR=""
+        BACKUP_ORIGIN=""
+        exit 1
+      fi
+      BACKUP_DIR=""
+      BACKUP_ORIGIN=""
+    fi
     echo "Installed copy: $DEST"
   fi
 done

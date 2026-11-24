@@ -45,8 +45,15 @@ TypeScript, React, Next.js 중심 프론트엔드 및 범용 소프트웨어 개
 ./uninstall.sh --scope global
 ```
 
-- **소유권 검증 및 레거시 마이그레이션**: `install.sh`와 `uninstall.sh`는 심볼릭 링크의 canonical 대상 경로와 `.dev-principles-script-managed` 메타데이터(`plugin=dev-principles`, `managed_by=install.sh`, `skill`, `install_path`, `source_path`)를 검증합니다. 타 플러그인의 심볼릭 링크·파일·디렉터리는 절대 덮어쓰거나 삭제하지 않으며, 기존 `managed-by=install.sh` 마커는 재설치 시 안전하게 마이그레이션됩니다.
-- **Windows Git Bash(MSYS2) 지원**: [`.gitattributes`](.gitattributes)로 `*.sh`의 LF 줄바꿈을 보장하고 `HOME`/`USERPROFILE` 폴백 및 CRLF 마커 정규화를 지원합니다. 개발자 모드(심볼릭 링크 권한)가 꺼진 Windows 환경에서는 `--copy` 옵션을 사용하며, 타 플러그인의 디렉터리 Junction도 동일하게 보호됩니다.
+- **지원 셸 환경**: POSIX `sh` 호환 셸(`/bin/sh`, `dash`, `bash`, `zsh`) 및 Windows Git Bash(MSYS2)를 지원합니다. [`.gitattributes`](.gitattributes)로 `*.sh`의 LF 줄바꿈을 보장하며, 개발자 모드(심볼릭 링크 권한)가 꺼진 Windows 환경에서는 `--copy` 옵션을 사용합니다.
+- **소유권 마커 스키마 (`schema_version=2`)**: `--copy` 설치 시 대상 디렉터리에 `.dev-principles-script-managed` 마커를 생성하며, 다음 필수 필드를 모두 검증합니다.
+  - 필수 메타데이터: `schema_version=2`, `plugin=dev-principles`, `managed_by=install.sh`, `install_mode=copy`, `skill=<스킬명>`, `install_path=<정규화 설치 경로>`, `source_path=<정규화 원본 경로>`
+  - 파일 매니페스트: `file=<상대경로>` (중복·빈 경로·절대 경로·`..` 경로 탈출·심볼릭 링크 불가)
+  - 명시적 하위 호환: `schema_version=1`(전체 필수 필드 검증)과 구버전 단일 행 `managed-by=install.sh` + `SKILL.md` 이름 일치만 예외적으로 허용하며, 불완전하거나 변조·중복된 마커 및 심볼릭 링크 마커는 거부합니다.
+- **무결성·보존·안전 삭제 정책**:
+  - 복사 디렉터리의 실제 파일·하위 디렉터리 목록과 파일 내용이 원본과 다르면(관리 파일 수정·누락, 사용자 파일·디렉터리 추가, 내부 심볼릭 링크 존재) 소유권을 인정하지 않고 덮어쓰기·삭제를 중단합니다.
+  - 삭제 시 `rm -rf`를 사용하지 않으며, 삭제 직전 소유권 재검증 후 관리 파일 개별 삭제 → 마커 별도 검증 후 삭제 → 빈 하위 디렉터리 순차 제거를 수행합니다. 오류 발생 시 남은 파일을 삭제하지 않고 즉시 중단합니다.
+  - 업데이트 시 기존 소유 설치를 백업(`.<skill>.dev-principles.bak.<pid>`)으로 이동한 뒤 교체하고, 실패 시 자동 복원합니다. 타 플러그인(`github-convention` 등)의 심볼릭 링크·파일·디렉터리·Windows Junction은 절대 침범하지 않습니다.
 
 ---
 
@@ -71,9 +78,13 @@ TypeScript, React, Next.js 중심 프론트엔드 및 범용 소프트웨어 개
 
 ### 오류 발생 시 복구 방법
 
-1. **소유권 충돌 오류(`Refusing to overwrite/remove ...`)**: 대상 경로가 타 플러그인이나 사용자 파일인지 확인한 뒤, 필요 시 `--target`으로 별도 경로를 지정하거나 기존 파일을 백업 후 재실행합니다.
-2. **설치 상태 점검**: `./install.sh --scope <project|global> --dry-run` 및 `./uninstall.sh --scope <project|global> --dry-run`으로 변경 예정 대상을 먼저 확인합니다.
-3. **설정·충돌 진단**: `node bin/dev-principles.mjs doctor` (또는 `/dp-doctor`)로 스키마, `DQ-04`/`SEC-01`/`SEC-02`, `AGENTS.md`/`CLAUDE.md` 충돌, 동반 플러그인 감지 상태를 확인합니다.
+1. **소유권 충돌 오류(`Refusing to overwrite/remove ...`)**:
+   - `user-added file/directory detected` 또는 `managed file modified`: 사용자가 추가한 파일이나 수정 내역을 백업한 뒤, 관리 디렉터리를 정리하거나 `--target`으로 별도 경로를 지정해 재실행합니다.
+   - 타 플러그인 마커·심볼릭 링크 충돌: 기존 설치를 보존한 채 `--target`으로 다른 경로를 지정합니다.
+2. **부분 설치·업데이트 중단 복구**:
+   - 설치/업데이트 도중 중단되어 `.<skill>.dev-principles.bak.<pid>` 백업이 남았다면 대상 경로 상태를 확인한 뒤 백업을 원래 위치로 되돌리거나 확인 후 삭제합니다. 임시 스테이징 디렉터리(`.<skill>.dev-principles.tmp.<pid>`)만 남은 경우 안전하게 삭제 후 재설치합니다.
+3. **설치 상태 점검**: `./install.sh --scope <project|global> --dry-run` 및 `./uninstall.sh --scope <project|global> --dry-run`으로 변경 예정 대상을 먼저 확인합니다.
+4. **설정·충돌 진단**: `node bin/dev-principles.mjs doctor` (또는 `/dp-doctor`)로 스키마, `DQ-04`/`SEC-01`/`SEC-02`, `AGENTS.md`/`CLAUDE.md` 충돌, 동반 플러그인 감지 상태를 확인합니다.
 
 ---
 

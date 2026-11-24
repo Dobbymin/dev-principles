@@ -496,7 +496,10 @@ export const runStaticChecks = ({
   const ruleOverrides = config?.rules ?? {};
   const ruleById = new Map(rules.map((r) => [r.id, r]));
 
-  const includeSet = includeFiles ? new Set([...includeFiles].map((f) => toPosix(f))) : null;
+  const includeSet =
+    includeFiles !== null && includeFiles !== undefined
+      ? new Set([...includeFiles].map((f) => toPosix(f)))
+      : null;
   if (includeSet && includeSet.size === 0) {
     return {
       ok: true,
